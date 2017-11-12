@@ -19,7 +19,6 @@ CFLAGS += -Wall
 .PHONY: all clean dir debug
 
 debug: CFLAGS += -g
-debug: all
 
 export MAKE_DIR SRC_DIR LIB_DIR BUILD_DIR CC CFLAGS LIBS INC_SRCH_PATH
 
@@ -27,6 +26,8 @@ all: dir
 	@$(MAKE) -C src/http -f http.mk
 	@$(MAKE) -C src/thpool -f thpool.mk
 	@$(MAKE) -C src/root -f root.mk
+
+debug: all
 
 dir:
 	@mkdir -p $(LIB_DIR)

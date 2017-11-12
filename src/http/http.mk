@@ -3,7 +3,7 @@ SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 $(LIB): $(OBJS)
-	@$(AR) cr $@ $^
+	@$(AR) crs $@ $^
 	@echo "Archive $(notdir $@)"
 
 $(OBJS): $(BUILD_DIR)/%.o: %.c %.h

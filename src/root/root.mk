@@ -6,11 +6,11 @@ OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 $(TARGET): $(OBJS)
 	@mkdir -p $(TARGET_DIR)
-	@$(CC) $(CFLAGS) -o $@ $<
+	@$(CC) $(CFLAGS) -o $@ $< $(LIBS)
 	@echo "Generate target $(notdir $@)"
 
 $(OBJS): $(SRCS)
-	$(CC) $(CFLAGS) $(LIBS) -c -o $@ $<
+	@$(CC) $(CFLAGS) -c -o $@ $<
 
 .PHONY: clean
 
