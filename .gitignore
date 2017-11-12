@@ -1,1 +1,3 @@
 .ftpconfig
+build/
+libs/
