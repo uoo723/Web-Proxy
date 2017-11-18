@@ -5,34 +5,24 @@ extern "C" {
 #endif
 
 #include <stdio.h>
+#include <stdbool.h>
 #include "http_parser.h"
-#include "http_request.h"
 #include "http_common.h"
 
 typedef struct {
     enum http_status status;
     http_headers_t headers;
     int content_length;
-    void *content;
+    char *content;      // Required manually calling free after use if content_length is not 0
+    bool on_message_completed;
 } http_response_t;
 
-/**
- * Get status string from enum http_status defined in http_parser.h
- */
-char *get_status_string(enum http_status status);
-
-/**
- * Make response regarding to request.
- */
-void make_response(http_response_t *response, http_request_t *request);
-
-/**
- * Make response to raw string for sending via socket.
- *
- * @params dst The result to be stored.
- * @params dst_size The size of dst.
- */
-void make_response_string(http_response_t *response, char **dst, int *dst_size);
+/* ********************** Callback for http_parser ********************* */
+int response_on_header_field_cb(http_parser *parser, const char *at, size_t len);
+int response_on_header_value_cb(http_parser *parser, const char *at, size_t len);
+int response_on_body_cb(http_parser *parser, const char *at, size_t len);
+int response_on_message_complete_cb(http_parser *parser);
+/** ******************************************************************** */
 
 /**
  * Print http_response_t.

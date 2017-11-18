@@ -1,63 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <time.h>
 
 #include "http_response.h"
 
-static void get_current_time(char *buf, size_t len) {
-    time_t now = time(NULL);
-    struct tm tm = *gmtime(&now);
-    strftime(buf, len, "%a, %d %b %Y %H:%M:%S GMT", &tm);
-}
+static __thread char *local_content;
+static __thread size_t local_content_len;
+static __thread size_t local_alloc_content_size;
 
-static void set_common_headers(http_response_t *response) {
-    char time_string[500] = {0};
-
-    get_current_time(time_string, 500);
-    set_header(&response->headers, "Date", time_string);
-    set_header(&response->headers, "Connection", "close");
-    set_header(&response->headers, "Server", "CServer/0.1");
-    set_header(&response->headers, "Accept-Ranges", "bytes");
-}
-
-static char *get_mime_type(char *path) {
-    char *tmp = strrchr(path, '.');
-    char *ext = tmp ? tmp + 1 : NULL;
-
-    if (!ext) {
-        return "text/plain";
-    }
-
-    if (strcmp(ext, "html") == 0) {
-        return "text/html";
-    }
-
-    if (strcmp(ext, "css") == 0) {
-        return "text/css";
-    }
-
-    if (strcmp(ext, "png") == 0) {
-        return "image/png";
-    }
-
-    if (strcmp(ext, "jpg") == 0 || strcmp(ext, "jpeg") == 0) {
-        return "image/jpeg";
-    }
-
-    if (strcmp(ext, "mp4") == 0) {
-        return "video/mp4";
-    }
-
-    if (strcmp(ext, "pdf") == 0) {
-        return "application/pdf";
-    }
-
-    return "text/plain";
-}
-
-char *get_status_string(enum http_status status) {
+static char *get_status_string(enum http_status status) {
     switch (status) {
     case HTTP_STATUS_CONTINUE:
         return "100 Continue";
@@ -242,82 +193,75 @@ char *get_status_string(enum http_status status) {
     }
 }
 
-void make_response(http_response_t *response, http_request_t *request) {
-    char path[100] = "html";
-    int is_server_error = 0;
+int response_on_header_field_cb(http_parser *parser, const char *at, size_t len) {
+    if (!parser->data) return -1;
 
-    response->status = HTTP_STATUS_OK;
-    set_common_headers(response);
-
-    if (request->method != HTTP_GET) {
-        response->status = HTTP_STATUS_METHOD_NOT_ALLOWED;
-        return;
-    }
-
-    if (strcmp(request->path, "/") == 0) {
-        strcat(path, "/index.html");
-    } else {
-        strcat(path, request->path);
-    }
-
-    FILE *fp = fopen(path, "rb");   // Open file in binary mode for convenience
-
-    if (!fp) {
-        if (errno == ENOENT) {
-            strcpy(path, "html/404.html");
-            fp = fopen(path, "rb");
-            response->status = HTTP_STATUS_NOT_FOUND;
-
-            if (!fp) {
-                response->status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-                is_server_error = 1;
-            }
-        } else {
-            response->status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-            is_server_error = 1;
-        }
-    }
-
-    if (!is_server_error) {
-        fseek(fp, 0, SEEK_END);
-        response->content_length = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        response->content = fp;
-
-        char str_content_len[100] = {0};
-        sprintf(str_content_len, "%d", response->content_length);
-        set_header(&response->headers, "Content-Length", str_content_len);
-        set_header(&response->headers, "Content-Type", get_mime_type(path));
-    }
-}
-
-void make_response_string(http_response_t *response, char **dst, int *dst_size) {
-    size_t content_offset = 0;
-    char *version = "HTTP/1.1 ";
-    char *status_string = get_status_string(response->status);
+    http_response_t *response = (http_response_t *) parser->data;
     http_headers_t *headers = &response->headers;
 
-    int i;
-    strcat(*dst, version);
-    content_offset += strlen(version);
-    strcat(*dst, status_string);
-    content_offset += strlen(status_string);
-    strcat(*dst, "\r\n");
-    content_offset += 2;
-
-    for (i = 0; i < headers->num_headers; i++) {
-        strcat(*dst, headers->field[i]);
-        content_offset += strlen(headers->field[i]);
-        strcat(*dst, ": ");
-        content_offset += 2;
-        strcat(*dst, headers->value[i]);
-        content_offset += strlen(headers->value[i]);
-        strcat(*dst, "\r\n");
-        content_offset += 2;
+    if (headers->last_header_element != HEADER_FIELD) {
+        headers->num_headers++;
     }
-    strcat(*dst, "\r\n");
-    content_offset += 2;
-    *dst_size = content_offset;
+
+    strncat(headers->field[headers->num_headers - 1], at, len);
+    headers->last_header_element = HEADER_FIELD;
+
+    return 0;
+}
+
+int response_on_header_value_cb(http_parser *parser, const char *at, size_t len) {
+    if (!parser->data) return -1;
+
+    http_response_t *response = (http_response_t *) parser->data;
+    http_headers_t *headers = &response->headers;
+    strncat(headers->value[headers->num_headers - 1], at, len);
+    headers->last_header_element = HEADER_VALUE;
+
+    return 0;
+}
+
+int response_on_body_cb(http_parser *parser, const char *at, size_t len) {
+    if (!parser->data) return -1;
+
+    if (local_content_len == 0) {
+        local_alloc_content_size = 2 * sizeof(char) * len;
+        local_content = malloc(local_alloc_content_size);
+
+        if (local_content == NULL) {
+            return -1;
+        }
+
+    } else if (local_content_len != 0
+        && (local_content_len + len) > local_alloc_content_size) {
+            local_alloc_content_size += 2 * sizeof(char) * len;
+            local_content = realloc(local_content, local_alloc_content_size);
+
+            if (local_content == NULL) {
+                return -1;
+            }
+    }
+
+    memcpy(local_content + local_content_len, at, len);
+    local_content_len += len;
+    return 0;
+}
+
+int response_on_message_complete_cb(http_parser *parser) {
+    if (!parser->data) return -1;
+
+    http_response_t *response = (http_response_t *) parser->data;
+    response->on_message_completed = true;
+    response->status = parser->status_code;
+
+    if (local_content_len != 0) {
+        response->content = local_content;
+        response->content_length = local_content_len;
+        local_content = NULL;
+        local_content_len = 0;
+        local_alloc_content_size = 0;
+    }
+
+    return 0;
 }
 
 void print_http_response(http_response_t *response) {
