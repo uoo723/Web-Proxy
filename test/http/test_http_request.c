@@ -8,30 +8,37 @@
 
 #include <http/http_request.h>
 
+typedef struct {
+	http_parser *parser;
+	http_parser_settings *settings;
+	http_request_t *request;
+	char buf[1024];
+} state_t;
+
 static int setup(void **state) {
-	return 0;
-}
-
-static int teardown(void **state) {
-	return 0;
-}
-
-static void test_http_request(void **state) {
+	state_t *s = malloc(sizeof(state_t));
 	http_parser *parser = malloc(sizeof(http_parser));
-	http_parser_settings settings;
+	http_parser_settings *settings = malloc(sizeof(http_parser_settings));
 	http_request_t *request = malloc(sizeof(http_request_t));
 
-	http_parser_settings_init(&settings);
-	settings.on_url = request_on_url_cb;
-	settings.on_header_field = request_on_header_field_cb;
-	settings.on_header_value = request_on_header_value_cb;
-	settings.on_body = request_on_body_cb;
-	settings.on_message_complete = request_on_message_complete_cb;
+	if (s == NULL || parser == NULL || settings == NULL || request == NULL) {
+		return -1;
+	}
 
+	http_parser_settings_init(settings);
+	settings->on_url = request_on_url_cb;
+	settings->on_header_field = request_on_header_field_cb;
+	settings->on_header_value = request_on_header_value_cb;
+	settings->on_body = request_on_body_cb;
+	settings->on_message_complete = request_on_message_complete_cb;
+
+	memset(parser, 0, sizeof(http_parser));
 	http_parser_init(parser, HTTP_REQUEST);
-	parser->data = request;
-
 	memset(request, 0, sizeof(http_request_t));
+
+	s->parser = parser;
+	s->settings = settings;
+	s->request = request;
 
 	char buf[1024] =
 		"GET / HTTP/1.1\r\n"
@@ -43,11 +50,41 @@ static void test_http_request(void **state) {
 		"Content-Length: 11\r\n\r\n"
 		"sample body";
 
+	strcpy(s->buf, buf);
+
+	*state = s;
+
+	return 0;
+}
+
+static int teardown(void **state) {
+	state_t *s = (state_t *) *state;
+	free(s->parser);
+	free(s->settings);
+	free(s->request);
+	free(s);
+
+	return 0;
+}
+
+static void test_http_request(void **state) {
+	state_t *s = (state_t *) *state;
+
+	http_parser *parser = s->parser;
+	http_parser_settings *settings = s->settings;
+	http_request_t *request = s->request;
+
 	size_t nparsed, recved;
-	recved = strlen(buf);
-	nparsed = http_parser_execute(parser, &settings, buf, recved);
+	recved = strlen(s->buf);
+
+	parser->data = request;
+
+	nparsed = http_parser_execute(parser, settings, s->buf, recved);
+
+	assert_true(recved == nparsed);
 
 	assert_int_equal(request->method, HTTP_GET);
+	assert_int_equal(parser->http_errno, HPE_OK);
 	assert_string_equal(find_header_value(&request->headers, "User-Agent"),
 		"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)");
 	assert_string_equal(find_header_value(&request->headers, "Host"),
@@ -63,9 +100,27 @@ static void test_http_request(void **state) {
 	assert_string_equal(request->body, "sample body");
 }
 
+static void test_failed_http_request(void **state) {
+	state_t *s = (state_t *) *state;
+
+	http_parser *parser = s->parser;
+	http_parser_settings *settings = s->settings;
+	http_request_t *request = s->request;
+
+	size_t nparsed, recved;
+	recved = strlen(s->buf);
+
+	nparsed = http_parser_execute(parser, settings, s->buf, recved);
+
+	assert_null(parser->data);
+	assert_false(nparsed == recved);
+	assert_true(parser->http_errno == HPE_CB_url);
+}
+
 int main() {
 	const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_http_request, setup, teardown),
+        cmocka_unit_test_setup_teardown(test_failed_http_request, setup, teardown),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
