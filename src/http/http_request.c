@@ -37,12 +37,12 @@ int request_on_header_field_cb(http_parser *parser, const char *at, size_t len) 
     http_request_t *request = (http_request_t *) parser->data;
     http_headers_t *headers = &request->headers;
 
-    if (request->last_header_element != REQ_FIELD) {
+    if (headers->last_header_element != HEADER_FIELD) {
         headers->num_headers++;
     }
 
     strncat(headers->field[headers->num_headers - 1], at, len);
-    request->last_header_element = REQ_FIELD;
+    headers->last_header_element = HEADER_FIELD;
 
     return 0;
 }
@@ -53,7 +53,7 @@ int request_on_header_value_cb(http_parser *parser, const char *at, size_t len) 
     http_request_t *request = (http_request_t *) parser->data;
     http_headers_t *headers = &request->headers;
     strncat(headers->value[headers->num_headers - 1], at, len);
-    request->last_header_element = REQ_VALUE;
+    headers->last_header_element = HEADER_VALUE;
 
     return 0;
 }

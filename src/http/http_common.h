@@ -12,6 +12,7 @@ extern "C" {
  * Common struct for http_request_t and http_response_t
  */
 typedef struct {
+    enum { HEADER_NONE=0, HEADER_FIELD, HEADER_VALUE } last_header_element;
     char field[MAX_HEADERS][MAX_ELEMENT_SIZE];
     char value[MAX_HEADERS][MAX_ELEMENT_SIZE];
     int num_headers;

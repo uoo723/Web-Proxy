@@ -13,7 +13,6 @@ extern "C" {
 
 typedef struct {
     char path[MAX_ELEMENT_SIZE];
-    enum { REQ_NONE=0, REQ_FIELD, REQ_VALUE } last_header_element;
     http_headers_t headers;
     char body[MAX_ELEMENT_SIZE];
     int method;
