@@ -15,7 +15,7 @@ void print_http_request(http_request_t *request) {
     fflush(stdout);
 }
 
-int on_url_cb(http_parser *parser, const char *at, size_t len) {
+int request_on_url_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return 0;
 
     http_request_t *request = (http_request_t *) parser->data;
@@ -31,7 +31,7 @@ int on_url_cb(http_parser *parser, const char *at, size_t len) {
     return 0;
 }
 
-int on_header_field_cb(http_parser *parser, const char *at, size_t len) {
+int request_on_header_field_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return 0;
 
     http_request_t *request = (http_request_t *) parser->data;
@@ -47,7 +47,7 @@ int on_header_field_cb(http_parser *parser, const char *at, size_t len) {
     return 0;
 }
 
-int on_header_value_cb(http_parser *parser, const char *at, size_t len) {
+int request_on_header_value_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return 0;
 
     http_request_t *request = (http_request_t *) parser->data;
@@ -58,7 +58,7 @@ int on_header_value_cb(http_parser *parser, const char *at, size_t len) {
     return 0;
 }
 
-int on_body_cb(http_parser *parser, const char *at, size_t len) {
+int request_on_body_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return 0;
 
     http_request_t *request = (http_request_t *) parser->data;
@@ -67,7 +67,7 @@ int on_body_cb(http_parser *parser, const char *at, size_t len) {
     return 0;
 }
 
-int on_message_complete_cb(http_parser *parser) {
+int request_on_message_complete_cb(http_parser *parser) {
     if (!parser->data) return 0;
 
     http_request_t *request = (http_request_t *) parser->data;

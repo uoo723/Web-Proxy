@@ -22,11 +22,11 @@ static void test_http_request(void **state) {
 	http_request_t *request = malloc(sizeof(http_request_t));
 
 	http_parser_settings_init(&settings);
-	settings.on_url = on_url_cb;
-	settings.on_header_field = on_header_field_cb;
-	settings.on_header_value = on_header_value_cb;
-	settings.on_body = on_body_cb;
-	settings.on_message_complete = on_message_complete_cb;
+	settings.on_url = request_on_url_cb;
+	settings.on_header_field = request_on_header_field_cb;
+	settings.on_header_value = request_on_header_value_cb;
+	settings.on_body = request_on_body_cb;
+	settings.on_message_complete = request_on_message_complete_cb;
 
 	http_parser_init(parser, HTTP_REQUEST);
 	parser->data = request;
