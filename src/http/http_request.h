@@ -5,6 +5,7 @@ extern "C" {
 #endif
 
 #include <string.h>
+#include <stdbool.h>
 #include "http_parser.h"
 #include "http_common.h"
 
@@ -16,7 +17,7 @@ typedef struct {
     http_headers_t headers;
     char body[MAX_ELEMENT_SIZE];
     int method;
-    int on_message_completed;
+    bool on_message_completed;
 } http_request_t;
 
 /**

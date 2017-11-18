@@ -72,6 +72,6 @@ int request_on_message_complete_cb(http_parser *parser) {
 
     http_request_t *request = (http_request_t *) parser->data;
     request->method = parser->method;
-    request->on_message_completed = 1;
+    request->on_message_completed = true;
     return 0;
 }
