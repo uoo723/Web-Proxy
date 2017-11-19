@@ -18,6 +18,8 @@ typedef struct {
     char body[MAX_ELEMENT_SIZE];
     int method;
     bool on_message_completed;
+    char ip[16];            // For logging
+    char host_name[128];    // For logging
 } http_request_t;
 
 /**
