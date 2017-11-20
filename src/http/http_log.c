@@ -48,4 +48,5 @@ void log_http_request(http_request_t *request, http_response_t *response) {
 	pthread_mutex_lock(&lock);
 	fprintf(stream, "Date: %s: %s %s %d\n", get_current_time(), request->ip,
 		request->host_name, response->content_length);
+	pthread_mutex_unlock(&lock);
 }
