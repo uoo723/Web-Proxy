@@ -19,7 +19,9 @@ typedef struct {
     int method;
     bool on_message_completed;
     char ip[16];            // For logging
-    char host_name[128];    // For logging
+    char schema[16];        // For logging
+    char port[8];           // For logging
+    char host[128];         // For logging
 } http_request_t;
 
 /**

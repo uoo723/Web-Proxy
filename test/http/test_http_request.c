@@ -12,8 +12,26 @@ typedef struct {
 	http_parser *parser;
 	http_parser_settings *settings;
 	http_request_t *request;
-	char buf[1024];
 } state_t;
+
+static char *messages[1024] = {
+	"GET / HTTP/1.1\r\n"
+	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Host: www.xxx.com\r\n"
+	"Accept-Language: en-us\r\n"
+	"Accept-Encoding: gzip, deflate\r\n"
+	"Connection: Keep-Alive\r\n"
+	"Content-Length: 11\r\n\r\n"
+	"sample body",
+
+	"GET http://www.xxx.com HTTP/1.1\r\n"
+	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Accept-Language: en-us\r\n"
+	"Accept-Encoding: gzip, deflate\r\n"
+	"Connection: Keep-Alive\r\n"
+	"Content-Length: 11\r\n\r\n"
+	"sample body"
+};
 
 static int setup(void **state) {
 	state_t *s = malloc(sizeof(state_t));
@@ -40,18 +58,6 @@ static int setup(void **state) {
 	s->settings = settings;
 	s->request = request;
 
-	char buf[1024] =
-		"GET / HTTP/1.1\r\n"
-		"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
-		"Host: www.xxx.com\r\n"
-		"Accept-Language: en-us\r\n"
-		"Accept-Encoding: gzip, deflate\r\n"
-		"Connection: Keep-Alive\r\n"
-		"Content-Length: 11\r\n\r\n"
-		"sample body";
-
-	strcpy(s->buf, buf);
-
 	*state = s;
 
 	return 0;
@@ -75,11 +81,11 @@ static void test_http_request(void **state) {
 	http_request_t *request = s->request;
 
 	size_t nparsed, recved;
-	recved = strlen(s->buf);
+	recved = strlen(messages[0]);
 
 	parser->data = request;
 
-	nparsed = http_parser_execute(parser, settings, s->buf, recved);
+	nparsed = http_parser_execute(parser, settings, messages[0], recved);
 
 	assert_true(recved == nparsed);
 
@@ -108,19 +114,52 @@ static void test_failed_http_request(void **state) {
 	http_request_t *request = s->request;
 
 	size_t nparsed, recved;
-	recved = strlen(s->buf);
+	recved = strlen(messages[0]);
 
-	nparsed = http_parser_execute(parser, settings, s->buf, recved);
+	nparsed = http_parser_execute(parser, settings, messages[0], recved);
 
 	assert_null(parser->data);
 	assert_false(nparsed == recved);
 	assert_true(parser->http_errno == HPE_CB_url);
 }
 
+static void test_parse_url(void **state) {
+	state_t *s = (state_t *) *state;
+	http_parser *parser = s->parser;
+	http_parser_settings *settings = s->settings;
+	http_request_t *request = s->request;
+
+	size_t nparsed, recved;
+	recved = strlen(messages[0]);
+
+	parser->data = request;
+
+	nparsed = http_parser_execute(parser, settings, messages[0], recved);
+
+	assert_true(parser->http_errno == HPE_OK);
+	assert_true(nparsed == recved);
+
+	assert_true(strcmp(request->host, "www.xxx.com") == 0);
+	assert_true(strcmp(request->schema, "http") == 0);
+	assert_true(strcmp(request->path, "/") == 0);
+
+	recved = strlen(messages[1]);
+
+	nparsed = http_parser_execute(parser, settings, messages[0], recved);
+
+	assert_true(parser->http_errno == HPE_OK);
+	assert_true(nparsed == recved);
+
+	assert_true(strcmp(request->host, "www.xxx.com") == 0);
+	assert_true(strcmp(request->schema, "http") == 0);
+	assert_true(strcmp(request->path, "/") == 0);
+}
+
 int main() {
 	const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(test_http_request, setup, teardown),
         cmocka_unit_test_setup_teardown(test_failed_http_request, setup, teardown),
+        cmocka_unit_test_setup_teardown(test_parse_url, setup, teardown),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }
