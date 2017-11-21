@@ -16,7 +16,7 @@ CFLAGS :=
 CFLAGS += $(INC_SRCH_PATH) $(LIB_SRCH_PATH)
 CFLAGS += -Wall
 
-.PHONY: all clean dir debug
+.PHONY: all clean dir debug test
 
 debug: CFLAGS += -g
 
@@ -29,6 +29,9 @@ all: dir
 	@$(MAKE) -C src/root -f root.mk
 
 debug: all
+
+test:
+	@test/all_test.sh
 
 dir:
 	@mkdir -p $(LIB_DIR)

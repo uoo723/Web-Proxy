@@ -22,7 +22,7 @@ static int setup(void **state) {
 	}
 
 	strcpy(request->ip, "192.168.0.1");
-	strcpy(request->host_name, "http://www.naver.com");
+	strcpy(request->host, "http://www.naver.com");
 
 	response->content_length = 128;
 
