@@ -44,9 +44,17 @@ bool http_log_set_file(const char *path) {
 }
 
 void log_http_request(http_request_t *request, http_response_t *response) {
-	FILE *stream = file != NULL ? file : stdout;
 	pthread_mutex_lock(&lock);
+	FILE *stream = file != NULL ? file : stdout;
+	char url[64] = {0};
+	if (strcmp(request->schema, "") != 0) {
+		strcpy(url, request->schema);
+		strcat(url, "://");
+	}
+	strcat(url, request->host);
+
 	fprintf(stream, "Date: %s: %s %s %d\n", get_current_time(), request->ip,
-		request->host, response->content_length);
+		url, response->content_length);
+	fflush(stream);
 	pthread_mutex_unlock(&lock);
 }
