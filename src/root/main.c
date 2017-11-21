@@ -43,71 +43,20 @@ static void error(const char *str) {
 }
 
 // Called from thread.
-static bool rcv_request(int sockfd, http_parser *parser,
-    http_parser_settings *settings, http_response_t *response) {
-    http_request_t *request;
+static bool rcv_request(int sockfd, http_request_t *request) {
+    http_parser *parser = malloc(sizeof(http_parser));
+    http_parser_settings settings;
     int nparsed, recved;
     char *buf = malloc(sock_rcv_buf_size);
-    if (!buf) {
-        perror("buf cannot be initialized");
-        return false;
-    }
-
-    while (1) {
-        if ((recved = recv(sockfd, buf, sock_rcv_buf_size, 0)) < 0) {
-            if (errno == EPIPE) {
-                break;
-            } else if (errno == EPROTOTYPE) {
-                continue;
-            } else {
-                perror("recv failed");
-                free(buf);
-                return false;
-            }
-        }
-
-        nparsed = http_parser_execute(parser, settings, buf, recved);
-        if (parser->upgrade) {
-            fprintf(stderr, "upgrade is not implemented\n");
-        }
-
-        if (nparsed != recved) {
-            fprintf(stderr, "nparsed != recved\n");
-            free(buf);
-            return false;
-        }
-
-        request = (http_request_t *) parser->data;
-        if (request->on_message_completed) break;
-    }
-
-    free(buf);
-    return true;
-}
-
-static void thread_main(void *data) {
-    args_t *args = (args_t *) data;
-    http_parser *parser = malloc(sizeof(http_parser));
-    http_request_t *request = malloc(sizeof(http_request_t));
-    http_response_t *response = malloc(sizeof(http_response_t));
-    http_parser_settings settings;
 
     if (!parser) {
         perror("parser cannot be initialized");
-        return;
+        return false;
     }
-
-    if (!request) {
-        perror("request cannot be initialized");
-        free(parser);
-        return;
-    }
-
-    if (!response) {
-        perror("response cannot be initialized");
-        free(parser);
-        free(request);
-        return;
+    if (!buf) {
+        perror("buf cannot be initialized");
+        free(buf);
+        return false;
     }
 
     http_parser_settings_init(&settings);
@@ -119,6 +68,56 @@ static void thread_main(void *data) {
 
     http_parser_init(parser, HTTP_REQUEST);
     parser->data = request;
+
+    while (1) {
+        if ((recved = recv(sockfd, buf, sock_rcv_buf_size, 0)) < 0) {
+            if (errno == EPIPE) {
+                break;
+            } else if (errno == EPROTOTYPE) {
+                continue;
+            } else {
+                perror("recv failed");
+                free(parser);
+                free(buf);
+                return false;
+            }
+        }
+
+        nparsed = http_parser_execute(parser, &settings, buf, recved);
+        if (parser->upgrade) {
+            fprintf(stderr, "upgrade is not implemented\n");
+        }
+
+        if (nparsed != recved) {
+            fprintf(stderr, "nparsed != recved\n");
+            free(parser);
+            free(buf);
+            return false;
+        }
+
+        if (request->on_message_completed) break;
+    }
+
+    free(parser);
+    free(buf);
+    return true;
+}
+
+static void thread_main(void *data) {
+    args_t *args = (args_t *) data;
+    http_request_t *request = malloc(sizeof(http_request_t));
+    http_response_t *response = malloc(sizeof(http_response_t));
+
+    if (!request) {
+        perror("request cannot be initialized");
+        return;
+    }
+
+    if (!response) {
+        perror("response cannot be initialized");
+        free(request);
+        return;
+    }
 
     memset(request, 0, sizeof(http_request_t));
     memset(response, 0, sizeof(http_response_t));
@@ -153,14 +152,13 @@ static void thread_main(void *data) {
         }
     }
 
-    if (!rcv_request(args->sockfd, parser, &settings, response)) {
+    if (!rcv_request(args->sockfd, request)) {
         fprintf(stderr, "rcv_request() failed\n");
     } else {
         log_http_request(request, response);
     }
 
 release:
-    free(parser);
     free(request);
     free(response);
     close(args->sockfd);
