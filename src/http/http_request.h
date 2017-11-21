@@ -22,6 +22,8 @@ typedef struct {
     char schema[16];        // For logging
     char port[8];           // For logging
     char host[128];         // For logging
+    char *raw;
+    size_t raw_size;
 } http_request_t;
 
 /**

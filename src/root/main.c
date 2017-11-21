@@ -47,14 +47,26 @@ static bool rcv_request(int sockfd, http_request_t *request) {
     http_parser *parser = malloc(sizeof(http_parser));
     http_parser_settings settings;
     int nparsed, recved;
+    size_t total_size = 0;
+    size_t raw_off = 0;
+    size_t raw_size = 1;
     char *buf = malloc(sock_rcv_buf_size);
+    char *raw = malloc(raw_size);
 
     if (!parser) {
         perror("parser cannot be initialized");
         return false;
     }
+
     if (!buf) {
         perror("buf cannot be initialized");
+        free(parser);
+        return false;
+    }
+
+    if (!raw) {
+        perror("raw cannot be initialized");
+        free(parser);
         free(buf);
         return false;
     }
@@ -79,6 +91,7 @@ static bool rcv_request(int sockfd, http_request_t *request) {
                 perror("recv failed");
                 free(parser);
                 free(buf);
+                free(raw);
                 return false;
             }
         }
@@ -92,11 +105,32 @@ static bool rcv_request(int sockfd, http_request_t *request) {
             fprintf(stderr, "nparsed != recved\n");
             free(parser);
             free(buf);
+            free(raw);
             return false;
         }
 
+        total_size += recved;
+
+        if (raw_size < total_size) {
+            raw_size = total_size;
+            raw = realloc(raw, raw_size);
+            if (!raw) {
+                perror("raw cannot be initialized");
+                free(parser);
+                free(buf);
+                return false;
+            }
+        }
+
+        memcpy(raw + raw_off, buf, recved);
+
+        raw_off += recved;
+
         if (request->on_message_completed) break;
     }
+
+    request->raw = raw;
+    request->raw_size = raw_size;
 
     free(parser);
     free(buf);
@@ -159,6 +193,7 @@ static void thread_main(void *data) {
     }
 
 release:
+    if (request->raw) free(request->raw);
     free(request);
     free(response);
     close(args->sockfd);
