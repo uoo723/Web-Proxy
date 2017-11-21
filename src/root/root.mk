@@ -4,7 +4,7 @@ TARGET = $(TARGET_DIR)/server
 SRCS = $(wildcard *.c)
 OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(LIB_DIR)/*.a
 	@mkdir -p $(TARGET_DIR)
 	@$(CC) $(CFLAGS) -o $@ $< $(LIBS)
 	@echo "Generate target $(notdir $@)"
