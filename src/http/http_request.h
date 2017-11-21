@@ -6,11 +6,16 @@ extern "C" {
 
 #include <string.h>
 #include <stdbool.h>
+#include <netinet/in.h>
 #include "http_parser.h"
 #include "http_common.h"
 
 #define MAX_HEADERS 50
 #define MAX_ELEMENT_SIZE 500
+
+#define SCHEMA_LEN 16
+#define PORT_LEN 8
+#define HOST_LEN 128
 
 typedef struct {
     char path[MAX_ELEMENT_SIZE];
@@ -18,10 +23,10 @@ typedef struct {
     char body[MAX_ELEMENT_SIZE];
     int method;
     bool on_message_completed;
-    char ip[16];            // For logging
-    char schema[16];        // For logging
-    char port[8];           // For logging
-    char host[128];         // For logging
+    char ip[INET_ADDRSTRLEN];       // For logging
+    char schema[SCHEMA_LEN];       // For logging
+    char port[PORT_LEN];          // For logging
+    char host[HOST_LEN];         // For logging
     char *raw;
     size_t raw_size;
 } http_request_t;
