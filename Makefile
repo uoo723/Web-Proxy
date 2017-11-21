@@ -25,7 +25,7 @@ export MAKE_DIR SRC_DIR LIB_DIR BUILD_DIR CC CFLAGS LIBS INC_SRCH_PATH
 all: dir
 	@$(MAKE) -C src/http -f http.mk
 	@$(MAKE) -C src/thpool -f thpool.mk
-	@$(MAKE) -C src/cache -f thpool.mk
+	@$(MAKE) -C src/cache -f cache.mk
 	@$(MAKE) -C src/root -f root.mk
 
 debug: all

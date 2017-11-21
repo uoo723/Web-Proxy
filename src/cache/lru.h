@@ -5,103 +5,70 @@ extern "C" {
 #endif
 
 #include <stdlib.h>
-#include <stdbool.h>
+#include <time.h>
+#include <pthread.h>
 
-/**
- * Comparsion function.
- *
- * If lhs == rhs, must be returned true, otherwise false.
- */
-typedef bool (*equal_t)(void *lhs, void *rhs);
+typedef enum {
+	LRU_CACHE_NO_ERROR = 0,
+	LRU_CACHE_MISSING_CACHE,
+	LRU_CACHE_MISSING_KEY,
+	LRU_CACHE_MISSING_VALUE,
+	LRU_CACHE_PTHREAD_ERROR,
+	LRU_CACHE_NO_MEM,
+	LRU_CACHE_VALUE_TOO_LONG
+} lru_cache_error;
 
-typedef struct q_node {
-	struct q_node *prev, *next;
-	void *data;
-} q_node_t;
+typedef struct lru_item {
+	void *key;
+	void *value;
+	size_t key_len;
+	size_t value_len;
+	size_t access_count;
+	struct lru_item *next;
+} lru_item_t;
 
 typedef struct {
-	size_t count;
-	size_t maximum_count;
-	q_node_t *front, *prev;
-} lru_queue_t;
-
-typedef struct {
-	size_t capacity;
-	q_node_t **array;
-} hash_t;
-
-/**
- * Initialize lru_queue_t object.
- *
- * @params maximum_count Maximum number of nodes.
- * @return lru_queue_t object if succeed, otherwise NULL.
- */
-lru_queue_t *init_lru_queue(size_t maximum_count);
+	lru_item_t **items;
+	lru_item_t *free_items;
+	size_t access_count;
+	size_t total_memory;
+	size_t free_memory;
+	size_t hash_table_size;
+	time_t seed;
+	pthread_mutex_t *lock;
+} lru_cache_t;
 
 /**
- * Initialize hasn_t object.
+ * Initialize lru_cache_t object.
  *
- * @params capacity The capcity of hash_t object.
- * @return hash_t object if succeed, otherwise NULL.
  */
-hash_t *init_hash(size_t capacity);
+lru_cache_t *lru_cache_init(size_t cache_size, size_t average_len);
 
 /**
- * Create new q_node_t object.
+ * Free lru_cache_t object.
  *
- * @params data The user defined data.
- * @return q_node_t object if succeed, otherwise NULL.
  */
-q_node_t *create_q_node(void *data);
+lru_cache_error lru_cache_free(lru_cache_t *cache);
 
 /**
- * Check whether queue is full or not.
+ * Set item to cache.
  *
- * @params queue The lru_queue_t to be checked.
- * @return true if queue is full, otherwise false.
- *		   If queue is NULL pointer return false..
  */
-bool is_queue_frame_full(lru_queue_t *queue);
+lru_cache_error lru_cache_set(lru_cache_t *cache, void *key, size_t key_len,
+	void *value, size_t value_len);
 
 /**
- * Check whether queue is empty or not.
+ * Get item from cache.
  *
- * @params queue The lru_queue_t to be checked.
- * @return true if queue is empty, otherwise false.
- *		   If queue is NULL pointer return true.
  */
-bool is_queue_empty(lru_queue_t *queue);
+lru_cache_error lru_cache_get(lru_cache_t *cache, void *key, size_t key_len,
+	void **value);
 
 /**
- * Enqueue operation.
+ * Delete item associated by key from cache.
  *
- * @params queue lru_queue_t.
- * @params hash hash_t.
- * @params page_num The page number to be crated to a node.
- * @params data The user defined data.
- * @return true if enqueue succeed, otherwise false(e.g. malloc failed).
  */
-bool enqueue(lru_queue_t *queue, hash_t *hash, size_t page_num, void *data);
-
-/**
- * Dequeue operation.
- *
- * @params queue lru_queue_t.
- */
-void dequeue(lru_queue_t *queue);
-
-/**
- * If the node with given page_num is in queue, we move the node to front of queue.
- * And if the node is not in queue, we create new node and add to the front of queue.
- *
- * @params queue lru_queue_t.
- * @params hash hash_t.
- * @params page_num size_t.
- * @params failed If not null and operation is failed,
- 				  failed will be set to false. (due to the enqueue for example)
- * @return true if hit, otherwise false.
- */
-bool reference_page(lru_queue_t *queue, hash_t *hash, size_t page_num, bool *failed);
+lru_cache_error lru_cache_delete(lru_cache_t *cache, void *key, size_t key_len);
 
 #ifdef __cplusplus
 }

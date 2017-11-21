@@ -1,95 +1,346 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
 #include "lru.h"
 
-lru_queue_t *init_lru_queue(size_t maximum_count) {
-	lru_queue_t *queue = malloc(sizeof(lru_queue_t));
-	if (queue == NULL) return NULL;
+#define lru_cache_error(cond, err) if (cond) { return (err); }
+#define lru_cache_test_missing_cache(cache) \
+	lru_cache_error(!(cache), LRU_CACHE_MISSING_CACHE)
+#define lru_cache_test_missing_key(key) \
+	lru_cache_error(!(key) || (key) == 0, LRU_CACHE_MISSING_KEY)
+#define lru_cache_test_missing_value(value) \
+	lru_cache_error(!(value) || (value) == 0, LRU_CACHE_MISSING_VALUE)
+#define lru_cache_test_value_too_large(cache, value_len) \
+	lru_cache_error(cache->total_memory < value_len, LRU_CACHE_VALUE_TOO_LONG)
 
-	queue->count = 0;
-	queue->front = queue->rear = NULL;
-	queue->maximum_count = maximum_count;
+#define lock_cache(cache) \
+	if (pthread_mutex_lock(cache->lock)) { \
+		perror("lru_cache failed to pthread_mutex_lock"); \
+		return LRU_CACHE_PTHREAD_ERROR; \
+	}
 
-	return queue;
+#define unlock_cache(cache) \
+	if (pthread_mutex_unlock(cache->lock)) { \
+		perror("lru_cache faeild to pthread_mutex_unlock"); \
+		return LRU_CACHE_PTHREAD_ERROR; \
+	}
+
+/**
+ * MurmurHash2
+ * http://sites.google.com/site/murmurhash
+ */
+static uint32_t lru_hash(lru_cache_t *cache, void *key, size_t key_len) {
+	uint32_t m = 0x5bd1e995;
+	uint32_t r = 24;
+	uint32_t h = cache->seed ^ key_len;
+	char *data = (char *) key;
+
+	while (key_len >= 4) {
+		uint32_t k = *(uint32_t *) data;
+		k *= m;
+		k ^= k >> r;
+		k *= m;
+		h *= m;
+		h ^= k;
+		data += 4;
+		key_len -= 4;
+	}
+
+	switch (key_len) {
+	case 3: h ^= data[2] << 16;
+	case 2: h ^= data[1] << 8;
+	case 1: h ^= data[0];
+	        h *= m;
+	}
+
+	h ^= h >> 13;
+	h *= m;
+	h ^= h >> 15;
+	return h % cache->hash_table_size;
 }
 
-hash_t *init_hash(size_t capacity) {
-	hash_t *hash = malloc(sizeof(hash_t));
-	if (hash == NULL) return NULL;
+/**
+ * Compare function
+ *
+ */
+static inline int lru_cache_cmp_keys(lru_item_t *item, void *key, size_t key_len) {
+	return item->key_len != key_len ? 1 : memcmp(item->key, key, key_len);
+}
 
-	hash->capacity = capacity;
-	hash->array = malloc(sizeof(q_node_t *) * hash->capacity);
-	if (hash->array == NULL) {
-		free(hash);
+/**
+ * Remove an item and push it to the free items queue.
+ *
+ */
+static void lru_cache_remove_item(lru_cache_t *cache, lru_item_t *prev,
+	lru_item_t *item, uint32_t hash_index) {
+	if (prev) {
+		prev->next = item->next;
+	} else {
+		cache->items[hash_index] = item->next;
+	}
+
+	cache->free_memory += item->value_len;
+	free(item->value);
+	free(item->key);
+
+	memset(item, 0, sizeof(lru_item_t));
+	item->next = cache->free_items;
+	cache->free_items = item;
+}
+
+/**
+ * Remove the least recently used item.
+ *
+ */
+static void lru_cache_remove_lru(lru_cache_t *cache) {
+	lru_item_t *min_item = NULL, *min_prev = NULL;
+	lru_item_t *item = NULL, *prev = NULL;
+	uint32_t i, min_index = -1;
+	size_t min_access_count = -1;
+
+	for (i = 0; i < cache->hash_table_size; i++) {
+		item = cache->items[i];
+		prev = NULL;
+
+		while (item) {
+			if (item->access_count < min_access_count || min_access_count == -1) {
+				min_access_count = item->access_count;
+				min_item = item;
+				min_prev = prev;
+				min_index = i;
+			}
+			prev = item;
+			item = item->next;
+		}
+	}
+
+	if (min_item) {
+		lru_cache_remove_item(cache, min_prev, min_item, min_index);
+	}
+}
+
+/**
+ * Pop an existing item of the free queue, or create new item.
+ *
+ */
+static lru_item_t *lru_cache_create_item(lru_cache_t *cache) {
+	lru_item_t *item = NULL;
+
+	if (cache->free_items) {
+		item = cache->free_items;
+		cache->free_items = item->next;
+	} else {
+		item = malloc(sizeof(lru_item_t));
+	}
+
+	return item;
+}
+
+lru_cache_t *lru_cache_init(size_t cache_size, size_t average_len) {
+	lru_cache_t *cache = malloc(sizeof(lru_cache_t));
+	if (!cache) {
+		perror("lru_cache cannot create object");
 		return NULL;
 	}
 
-	int i;
-	for (i = 0; i < hash->capacity; i++) {
-		hash->array[i] = NULL;
+	memset(cache, 0, sizeof(lru_cache_t));
+
+	cache->hash_table_size = cache_size / average_len;
+	cache->total_memory = cache->free_memory = cache_size;
+	cache->seed = time(NULL);
+
+	cache->items = malloc(sizeof(lru_cache_t *) * cache->hash_table_size);
+	if (!cache->items) {
+		perror("lru_cache cannot create hash table");
+		free(cache);
+		return NULL;
 	}
 
-	return hash;
-}
-
-q_node_t *create_q_node(size_t page_num, void *data) {
-	q_node_t *node = malloc(sizeof(q_node_t));
-	if (node == NULL) return NULL;
-
-	node->page_num = page_num;
-	node->data = data;
-	node->prev = node->next = NULL;
-
-	return node;
-}
-
-inline bool is_queue_frame_full(lru_queue_t *queue) {
-	return queue == NULL ? false : queue->count == queue->maximum_count;
-}
-
-inline bool is_queue_empty(lru_queue_t *queue) {
-	return queue == NULL ? true : queue->rear == NULL;
-}
-
-bool enqueue(lru_queue_t *queue, hash_t *hash, size_t page_num, void *data) {
-	if (queue == NULL || hash == NULL) return false;
-	if (page_num < 0 || page_num >= hash->capacity) return false;
-
-	if (is_queue_frame_full(queue)) {
-		hash->array[queue->rear->page_num] = NULL;
-		dequeue(queue);
+	cache->lock = malloc(sizeof(pthread_mutex_t));
+	if (pthread_mutex_init(cache->lock, NULL)) {
+		perror("lru_cache cannot create mutex");
+		free(cache->items);
+		free(cache);
+		return NULL;
 	}
 
-	q_node_t *node = create_q_node(page_num, data);
-	if (node == NULL) return false;
-	node->next = queue->front;
+	return cache;
+}
 
-	if (is_queue_empty(queue)) {
-		queue->rear = queue->front = node;
+lru_cache_error lru_cache_free(lru_cache_t *cache) {
+	lru_cache_test_missing_cache(cache);
+
+	lru_item_t *item = NULL, *next = NULL;
+	uint32_t i;
+
+	if (cache->items) {
+		for (i = 0; i < cache->hash_table_size; i++) {
+			item = cache->items[i];
+			while (item) {
+				next = item->next;
+				free(item);
+				item = next;
+			}
+		}
+
+		free(cache->items);
+	}
+
+	if (cache->lock) {
+		if (pthread_mutex_destroy(cache->lock)) {
+			perror("lru_cache cannot destroy mutex");
+			return LRU_CACHE_PTHREAD_ERROR;
+		}
+
+		free(cache->lock);
+	}
+
+	free(cache);
+
+	return LRU_CACHE_NO_ERROR;
+}
+
+lru_cache_error lru_cache_set(lru_cache_t *cache, void *key, size_t key_len,
+	void *value, size_t value_len) {
+	lru_cache_test_missing_cache(cache);
+	lru_cache_test_missing_key(key);
+	lru_cache_test_missing_value(value);
+	lru_cache_test_value_too_large(cache, value_len);
+
+	lock_cache(cache);
+
+	uint32_t hash_index = lru_hash(cache, key, key_len);
+	uint32_t required = 0;
+	lru_item_t *item = cache->items[hash_index];
+	lru_item_t *prev = NULL;
+
+	void *new_key;
+	void *new_value;
+
+	while (item && lru_cache_cmp_keys(item, key, key_len)) {
+		prev = item;
+		item = item->next;
+	}
+
+	if (item) {
+		required = value_len - item->value_len;
+		free(item->value);
+		new_value = malloc(value_len);
+
+		if (!new_value) {
+			perror("lru_cache_set cannot create new_value");
+			unlock_cache(cache);
+			return LRU_CACHE_NO_MEM;
+		}
+
+		memcpy(new_value, value, value_len);
+
+		item->value = new_value;
+		item->value_len = value_len;
 	} else {
-		queue->front->prev = node;
-		queue->front = node;
+		item = lru_cache_create_item(cache);
+		if (!item) {
+			perror("lru_cache_set cannot create item");
+			unlock_cache(cache);
+			return LRU_CACHE_NO_MEM;
+		}
+
+		memset(item, 0, sizeof(lru_item_t));
+
+		new_key = malloc(key_len);
+
+		if (!new_key) {
+			perror("lru_cache_set cannot create new_key");
+			unlock_cache(cache);
+			return LRU_CACHE_NO_MEM;
+		}
+
+		new_value = malloc(value_len);
+
+		if (!new_value) {
+			free(new_key);
+			perror("lru_cache_set cannot create new_value");
+			unlock_cache(cache);
+			return LRU_CACHE_NO_MEM;
+		}
+
+		memcpy(new_key, key, key_len);
+		memcpy(new_value, value, value_len);
+
+		item->key = new_key;
+		item->value = new_value;
+		item->key_len = key_len;
+		item->value_len = value_len;
+		required = value_len;
+
+		if (prev) {
+			prev->next = item;
+		} else {
+			cache->items[hash_index] = item;
+		}
 	}
 
-	hash->array[page_num] = node;
-	queue->count++;
+	item->access_count = ++cache->access_count;
+
+	if (required > 0 && required > cache->free_memory) {
+		while (cache->free_memory < required) {
+			lru_cache_remove_lru(cache);
+		}
+	}
+
+	cache->free_memory -= required;
+
+	unlock_cache(cache);
+
+	return LRU_CACHE_NO_ERROR;
 }
 
-void dequeue(lru_queue_t *queue) {
-	if (is_queue_empty(queue)) return;
-	if (queue->front == queue->rear) {
-		queue->front = NULL;
+lru_cache_error lru_cache_get(lru_cache_t *cache, void *key, size_t key_len,
+	void **value) {
+	lru_cache_test_missing_cache(cache);
+	lru_cache_test_missing_key(key);
+
+	lock_cache(cache);
+
+	uint32_t hash_index = lru_hash(cache, key, key_len);
+	lru_item_t *item = cache->items[hash_index];
+
+	while (item && lru_cache_cmp_keys(item, key, key_len)) {
+		item = item->next;
 	}
 
-	q_node_t *node = queue->rear;
-	queue->rear = queue->rear->prev;
-
-	if (queue->rear) {
-		queue->rear->next = NULL;
+	if (item) {
+		*value = item->value;
+		item->access_count++;
+	} else {
+		*value = NULL;
 	}
 
-	free(node);
-	queue->count--;
+	unlock_cache(cache);
+	return LRU_CACHE_NO_ERROR;
 }
 
-bool reference_page(lru_queue_t *queue, hash_t *hash, size_t page_num, bool *failed) {
-	return false;
+lru_cache_error lru_cache_delete(lru_cache_t *cache, void *key, size_t key_len) {
+	lru_cache_test_missing_cache(cache);
+	lru_cache_test_missing_key(key);
+
+	lock_cache(cache);
+
+	uint32_t hash_index = lru_hash(cache, key, key_len);
+	lru_item_t *item = cache->items[hash_index];
+	lru_item_t *prev = NULL;
+
+	while (item && lru_cache_cmp_keys(item, key, key_len)) {
+		prev = item;
+		item = item->next;
+	}
+
+	if (item) {
+		lru_cache_remove_item(cache, prev, item, hash_index);
+	}
+
+	unlock_cache(cache);
+	return LRU_CACHE_NO_ERROR;
 }
