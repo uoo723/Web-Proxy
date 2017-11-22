@@ -11,6 +11,8 @@ extern "C" {
 
 typedef struct {
     enum http_status status;
+    unsigned short http_major;
+    unsigned short http_minor;
     http_headers_t headers;
     int content_length;
     char *content;      // Required manually calling free after use if content_length is not 0
@@ -23,6 +25,14 @@ int response_on_header_value_cb(http_parser *parser, const char *at, size_t len)
 int response_on_body_cb(http_parser *parser, const char *at, size_t len);
 int response_on_message_complete_cb(http_parser *parser);
 /** ******************************************************************** */
+
+/**
+ * Make response string.
+ * dst must be free'd after use. But, dst would be NULL. when returned false.
+ * dst_size is the size of dst.
+ * If making is successful, return true.
+ */
+bool make_response_string(http_response_t *response, char **dst, size_t *dst_size);
 
 /**
  * Print http_response_t.
