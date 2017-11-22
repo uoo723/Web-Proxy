@@ -19,16 +19,17 @@ extern "C" {
 
 typedef struct {
     char path[MAX_ELEMENT_SIZE];
+    unsigned short http_major;
+    unsigned short http_minor;
     http_headers_t headers;
-    char body[MAX_ELEMENT_SIZE];
+    int content_length;
+    char *content;
     int method;
     bool on_message_completed;
     char ip[INET_ADDRSTRLEN];       // For logging
     char schema[SCHEMA_LEN];       // For logging
     char port[PORT_LEN];          // For logging
     char host[HOST_LEN];         // For logging
-    char *raw;
-    size_t raw_size;
 } http_request_t;
 
 /**
@@ -43,6 +44,12 @@ int request_on_header_value_cb(http_parser *parser, const char *at, size_t len);
 int request_on_body_cb(http_parser *parser, const char *at, size_t len);
 int request_on_message_complete_cb(http_parser *parser);
 /** ******************************************************************** */
+
+/**
+ * Make request string.
+ * dst must be free'd after use.
+ */
+bool make_request_string(http_request_t *request, char **dst, size_t *dst_size);
 
 #ifdef __cplusplus
 }

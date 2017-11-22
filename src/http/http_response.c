@@ -283,7 +283,6 @@ bool make_response_string(http_response_t *response, char **dst, size_t *dst_siz
     }
 
     memset(buf, 0, buf_size);
-    *dst_size = 0;
 
     sprintf(buf, "HTTP/%d.%d %s\r\n", response->http_major,
         response->http_minor, get_status_string(response->status));

@@ -77,12 +77,8 @@ static bool rcv_request(int sockfd, http_request_t *request) {
     http_parser *parser;
     http_parser_settings settings;
     int nparsed, recved;
-    size_t total_size = 0;
-    size_t raw_off = 0;
-    size_t raw_size = 1;
     size_t sock_rcv_buf_size;
     char *buf;
-    char *raw;
 
     sock_rcv_buf_size = get_sock_buf_size(sockfd, SO_RCVBUF);
     if (sock_rcv_buf_size == 0) {
@@ -100,14 +96,6 @@ static bool rcv_request(int sockfd, http_request_t *request) {
     if (!buf) {
         perror("buf cannot be initialized");
         free(parser);
-        return false;
-    }
-
-    raw = malloc(raw_size);
-    if (!raw) {
-        perror("raw cannot be initialized");
-        free(parser);
-        free(buf);
         return false;
     }
 
@@ -131,7 +119,6 @@ static bool rcv_request(int sockfd, http_request_t *request) {
                 perror("recv failed");
                 free(parser);
                 free(buf);
-                free(raw);
                 return false;
             }
         }
@@ -141,7 +128,6 @@ static bool rcv_request(int sockfd, http_request_t *request) {
             fprintf(stderr, "upgrade is not implemented\n");
             free(parser);
             free(buf);
-            free(raw);
             return false;
         }
 
@@ -149,30 +135,9 @@ static bool rcv_request(int sockfd, http_request_t *request) {
             fprintf(stderr, "nparsed != recved\n");
             free(parser);
             free(buf);
-            free(raw);
             return false;
         }
-
-        total_size += recved;
-
-        if (raw_size < total_size) {
-            raw_size = total_size;
-            raw = realloc(raw, raw_size);
-            if (!raw) {
-                perror("raw cannot be initialized");
-                free(parser);
-                free(buf);
-                return false;
-            }
-        }
-
-        memcpy(raw + raw_off, buf, recved);
-
-        raw_off += recved;
     }
-
-    request->raw = raw;
-    request->raw_size = raw_size;
 
     free(parser);
     free(buf);
@@ -186,9 +151,10 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     struct addrinfo *addrinfo, *rp;
     size_t sock_snd_buf_size;
     size_t sock_rcv_buf_size;
-    size_t remaining, offset;
-    size_t sent, recved, nparsed;
-    char *buf;
+    size_t remaining, offset, sent;
+    size_t recved, nparsed;
+    size_t req_size;
+    char *buf, *req_str;
     http_parser *parser;
     http_parser_settings settings;
 
@@ -222,7 +188,6 @@ static bool send_request(http_request_t *request, http_response_t *response) {
 
     sock_snd_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
     sock_rcv_buf_size = get_sock_buf_size(sockfd, SO_RCVBUF);
-    remaining = request->raw_size;
 
     if (sock_snd_buf_size == 0 || sock_rcv_buf_size == 0) {
         fprintf(stderr, "sock_snd_buf_size is 0\n");
@@ -231,13 +196,21 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     }
 
     buf = malloc(sock_snd_buf_size);
-    offset = 0;
-
     if (!buf) {
         perror("buf cannot be initialized");
         close(sockfd);
         return false;
     }
+
+    if (!make_request_string(request, &req_str, &req_size)) {
+        fprintf(stderr, "make_request_string() failed\n");
+        free(buf);
+        close(sockfd);
+        return false;
+    }
+
+    remaining = req_size;
+    offset = 0;
 
     while (remaining != 0) {
         size_t buf_size;
@@ -248,10 +221,11 @@ static bool send_request(http_request_t *request, http_response_t *response) {
             buf_size = sock_snd_buf_size;
         }
 
-        memcpy(buf, request->raw + offset, buf_size);
+        memcpy(buf, req_str + offset, buf_size);
         if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
             perror("send() failed");
             free(buf);
+            free(req_str);
             close(sockfd);
             return false;
         }
@@ -260,6 +234,11 @@ static bool send_request(http_request_t *request, http_response_t *response) {
         offset += sent;
     }
 
+    free(req_str);
+
+// =========================================================================
+
+    // rcv
     buf = realloc(buf, sock_rcv_buf_size);
 
     if (!buf) {
@@ -403,8 +382,8 @@ static void thread_main(void *data) {
         log_http_request(request, response);
     }
 
-    if (request->raw) {
-        free(request->raw);
+    if (request->content_length != 0) {
+        free(request->content);
     }
 
     if (response->content_length != 0) {

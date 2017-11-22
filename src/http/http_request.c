@@ -1,5 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "http_request.h"
+
+static __thread char *local_content;
+static __thread size_t local_content_len;
+static __thread size_t local_alloc_content_size;
 
 void print_http_request(http_request_t *request) {
     int i;
@@ -11,7 +16,7 @@ void print_http_request(http_request_t *request) {
         printf("%s: %s\n", headers.field[i], headers.value[i]);
     }
 
-    printf("body: \n%s\n", request->body);
+    printf("content: \n%s\n", request->content);
     fflush(stdout);
 }
 
@@ -78,9 +83,26 @@ int request_on_header_value_cb(http_parser *parser, const char *at, size_t len) 
 int request_on_body_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return -1;
 
-    http_request_t *request = (http_request_t *) parser->data;
-    strncat(request->body, at, len);
+    if (local_content_len == 0) {
+        local_alloc_content_size = 2 * sizeof(char) * len;
+        local_content = malloc(local_alloc_content_size);
 
+        if (local_content == NULL) {
+            return -1;
+        }
+
+    } else if (local_content_len != 0
+        && (local_content_len + len) > local_alloc_content_size) {
+            local_alloc_content_size += 2 * sizeof(char) * len;
+            local_content = realloc(local_content, local_alloc_content_size);
+
+            if (local_content == NULL) {
+                return -1;
+            }
+    }
+
+    memcpy(local_content + local_content_len, at, len);
+    local_content_len += len;
     return 0;
 }
 
@@ -90,6 +112,8 @@ int request_on_message_complete_cb(http_parser *parser) {
     http_request_t *request = (http_request_t *) parser->data;
     request->method = parser->method;
     request->on_message_completed = true;
+    request->http_major = parser->http_major;
+    request->http_minor = parser->http_minor;
 
     struct http_parser_url u;
     int is_connect = parser->method == HTTP_CONNECT;
@@ -145,5 +169,66 @@ int request_on_message_complete_cb(http_parser *parser) {
         strcpy(request->port, "80");
     }
 
+    if (local_content_len != 0) {
+        request->content = local_content;
+        request->content_length = local_content_len;
+        local_content = NULL;
+        local_content_len = 0;
+        local_alloc_content_size = 0;
+    }
+
     return 0;
+}
+
+bool make_request_string(http_request_t *request, char **dst, size_t *dst_size) {
+    http_headers_t *headers;
+    size_t buf_size;
+    char *buf;
+    int i;
+
+    headers = &request->headers;
+    buf_size = request->content_length + 2048;
+    *dst = NULL;
+    *dst_size = 0;
+    buf = malloc(buf_size);
+
+    if (!buf) {
+        return false;
+    }
+
+    memset(buf, 0, buf_size);
+
+    sprintf(buf, "%s %s HTTP/%d.%d\r\n", http_method_str(request->method),
+        request->path, request->http_major, request->http_minor);
+
+    for (i = 0; i < headers->num_headers; i++) {
+        if (strlen(buf) + 1 > buf_size) {
+            buf_size += 1024;
+            buf = realloc(buf, buf_size);
+            if (!buf) {
+                return false;
+            }
+        }
+
+        strcat(buf, headers->field[i]);
+        strcat(buf, ": ");
+        strcat(buf, headers->value[i]);
+        strcat(buf, "\r\n");
+    }
+    strcat(buf, "\r\n");
+
+    *dst_size = strlen(buf) + request->content_length;
+
+    *dst = malloc(*dst_size);
+    if (!(*dst)) {
+        free(buf);
+        *dst_size = 0;
+        return false;
+    }
+
+    memcpy(*dst, buf, strlen(buf));
+    memcpy(*dst + strlen(buf), request->content, request->content_length);
+
+    free(buf);
+    return true;
 }
