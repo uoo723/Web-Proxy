@@ -30,6 +30,22 @@ static char *messages[1024] = {
 	"Accept-Encoding: gzip, deflate\r\n"
 	"Connection: Keep-Alive\r\n"
 	"Content-Length: 11\r\n\r\n"
+	"sample body",
+
+	"GET https://www.xxx.com/test HTTP/1.1\r\n"
+	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Accept-Language: en-us\r\n"
+	"Accept-Encoding: gzip, deflate\r\n"
+	"Connection: Keep-Alive\r\n"
+	"Content-Length: 11\r\n\r\n"
+	"sample body",
+
+	"GET https://www.xxx.com:443/test HTTP/1.1\r\n"
+	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Accept-Language: en-us\r\n"
+	"Accept-Encoding: gzip, deflate\r\n"
+	"Connection: Keep-Alive\r\n"
+	"Content-Length: 11\r\n\r\n"
 	"sample body"
 };
 
@@ -145,7 +161,7 @@ static void test_parse_url(void **state) {
 
 	recved = strlen(messages[1]);
 
-	nparsed = http_parser_execute(parser, settings, messages[0], recved);
+	nparsed = http_parser_execute(parser, settings, messages[1], recved);
 
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
@@ -153,6 +169,30 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->host, "www.xxx.com") == 0);
 	assert_true(strcmp(request->schema, "http") == 0);
 	assert_true(strcmp(request->path, "/") == 0);
+
+	recved = strlen(messages[2]);
+
+	nparsed = http_parser_execute(parser, settings, messages[2], recved);
+
+	assert_true(parser->http_errno == HPE_OK);
+	assert_true(nparsed == recved);
+
+	assert_true(strcmp(request->host, "www.xxx.com") == 0);
+	assert_true(strcmp(request->schema, "https") == 0);
+	assert_true(strcmp(request->path, "/test") == 0);
+	assert_true(strcmp(request->port, "") == 0);
+
+	recved = strlen(messages[3]);
+
+	nparsed = http_parser_execute(parser, settings, messages[3], recved);
+
+	assert_true(parser->http_errno == HPE_OK);
+	assert_true(nparsed == recved);
+
+	assert_true(strcmp(request->host, "www.xxx.com") == 0);
+	assert_true(strcmp(request->schema, "https") == 0);
+	assert_true(strcmp(request->path, "/test") == 0);
+	assert_true(strcmp(request->port, "443") == 0);
 }
 
 int main() {
