@@ -140,6 +140,10 @@ int request_on_message_complete_cb(http_parser *parser) {
         && request->path[strlen(request->path)-1] == '/') {
         request->path[strlen(request->path)-1] = '\0';
     }
-    
+
+    if (request->port == NULL || strcmp(request->port, "") == 0) {
+        strcpy(request->port, "80");
+    }
+
     return 0;
 }
