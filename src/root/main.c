@@ -139,6 +139,10 @@ static bool rcv_request(int sockfd, http_request_t *request) {
         nparsed = http_parser_execute(parser, &settings, buf, recved);
         if (parser->upgrade) {
             fprintf(stderr, "upgrade is not implemented\n");
+            free(parser);
+            free(buf);
+            free(raw);
+            return false;
         }
 
         if (nparsed != recved) {
@@ -180,7 +184,7 @@ static bool rcv_request(int sockfd, http_request_t *request) {
 static bool send_request(http_request_t *request, http_response_t *response) {
     int sockfd;
     struct addrinfo *addrinfo, *rp;
-    size_t sock_send_buf_size;
+    size_t sock_snd_buf_size;
     size_t sock_rcv_buf_size;
     size_t remaining, offset;
     size_t sent, recved, nparsed;
@@ -216,17 +220,17 @@ static bool send_request(http_request_t *request, http_response_t *response) {
 
     freeaddrinfo(addrinfo);
 
-    sock_send_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
+    sock_snd_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
     sock_rcv_buf_size = get_sock_buf_size(sockfd, SO_RCVBUF);
     remaining = request->raw_size;
 
-    if (sock_send_buf_size == 0 || sock_rcv_buf_size == 0) {
-        fprintf(stderr, "sock_send_buf_size is 0\n");
+    if (sock_snd_buf_size == 0 || sock_rcv_buf_size == 0) {
+        fprintf(stderr, "sock_snd_buf_size is 0\n");
         close(sockfd);
         return false;
     }
 
-    buf = malloc(sock_send_buf_size);
+    buf = malloc(sock_snd_buf_size);
     offset = 0;
 
     if (!buf) {
@@ -238,10 +242,10 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     while (remaining != 0) {
         size_t buf_size;
 
-        if (remaining <= sock_send_buf_size) {
+        if (remaining <= sock_snd_buf_size) {
             buf_size = remaining;
-        } else {    // remaining > sock_send_buf_size
-            buf_size = sock_send_buf_size;
+        } else {    // remaining > sock_snd_buf_size
+            buf_size = sock_snd_buf_size;
         }
 
         memcpy(buf, request->raw + offset, buf_size);
@@ -313,6 +317,61 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     return true;
 }
 
+// Called from thread. send response received by origin server to client.
+static bool send_response(int sockfd, http_response_t *response) {
+    size_t sock_snd_buf_size;
+    size_t sent, remaining, offset;
+    size_t res_size;
+    char *buf;
+    char *res_str;
+
+    sock_snd_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
+    if (sock_snd_buf_size == 0) {
+        fprintf(stderr, "sock_snd_buf_size is 0\n");
+        return false;
+    }
+
+    buf = malloc(sock_snd_buf_size);
+    if (!buf) {
+        perror("buf cannot be initialized");
+        return false;
+    }
+
+    if (!make_response_string(response, &res_str, &res_size)) {
+        fprintf(stderr, "make_response_string() failed\n");
+        free(buf);
+        return false;
+    }
+
+    remaining = res_size;
+    offset = 0;
+
+    while (remaining != 0) {
+        size_t buf_size;
+
+        if (remaining <= sock_snd_buf_size) {
+            buf_size = remaining;
+        } else {
+            buf_size = sock_snd_buf_size;
+        }
+
+        memcpy(buf, res_str + offset, buf_size);
+        if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
+            perror("send() failed");
+            free(buf);
+            free(res_str);
+            return false;
+        }
+
+        remaining -= sent;
+        offset += sent;
+    }
+
+    free(buf);
+    free(res_str);
+    return true;
+}
+
 static void thread_main(void *data) {
     args_t *args = (args_t *) data;
     http_request_t *request = malloc(sizeof(http_request_t));
@@ -338,6 +397,8 @@ static void thread_main(void *data) {
         fprintf(stderr, "rcv_request() failed\n");
     } else if (!send_request(request, response)) {
         fprintf(stderr, "send_request() failed\n");
+    } else if (!send_response(args->sockfd, response)){
+        fprintf(stderr, "send_response() failed\n");
     } else {
         log_http_request(request, response);
     }
@@ -349,7 +410,7 @@ static void thread_main(void *data) {
     if (response->content_length != 0) {
         free(response->content);
     }
-    
+
     free(request);
     free(response);
     close(args->sockfd);
