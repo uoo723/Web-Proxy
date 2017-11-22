@@ -52,7 +52,8 @@ void log_http_request(http_request_t *request, http_response_t *response) {
 		strcat(url, "://");
 	}
 	strcat(url, request->host);
-
+	strcat(url, request->path);
+	
 	fprintf(stream, "Date: %s: %s %s %d\n", get_current_time(), request->ip,
 		url, response->content_length);
 	fflush(stream);
