@@ -160,11 +160,6 @@ int request_on_message_complete_cb(http_parser *parser) {
         strcpy(request->path, "/");
     }
 
-    if (request->path != NULL && strlen(request->path) != 1
-        && request->path[strlen(request->path)-1] == '/') {
-        request->path[strlen(request->path)-1] = '\0';
-    }
-
     if (request->port == NULL || strcmp(request->port, "") == 0) {
         strcpy(request->port, "80");
     }
@@ -226,6 +221,8 @@ bool make_request_string(http_request_t *request, char **dst, size_t *dst_size) 
         return false;
     }
 
+    memset(*dst, 0, *dst_size);
+    
     memcpy(*dst, buf, strlen(buf));
     memcpy(*dst + strlen(buf), request->content, request->content_length);
 

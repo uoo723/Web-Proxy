@@ -312,6 +312,8 @@ bool make_response_string(http_response_t *response, char **dst, size_t *dst_siz
         return false;
     }
 
+    memset(*dst, 0, *dst_size);
+    
     memcpy(*dst, buf, strlen(buf));
     memcpy(*dst + strlen(buf), response->content, response->content_length);
 
