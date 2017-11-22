@@ -132,5 +132,14 @@ int request_on_message_complete_cb(http_parser *parser) {
         }
     }
 
+    if (strcmp(request->path, "") == 0) {
+        strcpy(request->path, "/");
+    }
+
+    if (request->path != NULL && strlen(request->path) != 1
+        && request->path[strlen(request->path)-1] == '/') {
+        request->path[strlen(request->path)-1] = '\0';
+    }
+    
     return 0;
 }

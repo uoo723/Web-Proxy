@@ -26,6 +26,7 @@ static char *messages[1024] = {
 
 	"GET http://www.xxx.com HTTP/1.1\r\n"
 	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Host: www.xxx.com\r\n"
 	"Accept-Language: en-us\r\n"
 	"Accept-Encoding: gzip, deflate\r\n"
 	"Connection: Keep-Alive\r\n"
@@ -34,14 +35,25 @@ static char *messages[1024] = {
 
 	"GET https://www.xxx.com/test HTTP/1.1\r\n"
 	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Host: www.xxx.com\r\n"
 	"Accept-Language: en-us\r\n"
 	"Accept-Encoding: gzip, deflate\r\n"
 	"Connection: Keep-Alive\r\n"
 	"Content-Length: 11\r\n\r\n"
 	"sample body",
 
-	"GET https://www.xxx.com:443/test HTTP/1.1\r\n"
+	"GET https://www.xxx.com:443/test/ HTTP/1.1\r\n"
 	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Host: www.xxx.com\r\n"
+	"Accept-Language: en-us\r\n"
+	"Accept-Encoding: gzip, deflate\r\n"
+	"Connection: Keep-Alive\r\n"
+	"Content-Length: 11\r\n\r\n"
+	"sample body",
+
+	"GET http://192.168.56.101 HTTP/1.1\r\n"
+	"User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n"
+	"Host: 192.168.56.101"
 	"Accept-Language: en-us\r\n"
 	"Accept-Encoding: gzip, deflate\r\n"
 	"Connection: Keep-Alive\r\n"
@@ -67,7 +79,6 @@ static int setup(void **state) {
 	settings->on_message_complete = request_on_message_complete_cb;
 
 	memset(parser, 0, sizeof(http_parser));
-	http_parser_init(parser, HTTP_REQUEST);
 	memset(request, 0, sizeof(http_request_t));
 
 	s->parser = parser;
@@ -101,6 +112,8 @@ static void test_http_request(void **state) {
 
 	parser->data = request;
 
+	http_parser_init(parser, HTTP_REQUEST);
+
 	nparsed = http_parser_execute(parser, settings, messages[0], recved);
 
 	assert_true(recved == nparsed);
@@ -132,6 +145,7 @@ static void test_failed_http_request(void **state) {
 	size_t nparsed, recved;
 	recved = strlen(messages[0]);
 
+	http_parser_init(parser, HTTP_REQUEST);
 	nparsed = http_parser_execute(parser, settings, messages[0], recved);
 
 	assert_null(parser->data);
@@ -150,6 +164,8 @@ static void test_parse_url(void **state) {
 
 	parser->data = request;
 
+	http_parser_init(parser, HTTP_REQUEST);
+
 	nparsed = http_parser_execute(parser, settings, messages[0], recved);
 
 	assert_true(parser->http_errno == HPE_OK);
@@ -158,6 +174,9 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->host, "www.xxx.com") == 0);
 	assert_true(strcmp(request->schema, "http") == 0);
 	assert_true(strcmp(request->path, "/") == 0);
+
+	memset(request, 0, sizeof(http_request_t));
+	http_parser_init(parser, HTTP_REQUEST);
 
 	recved = strlen(messages[1]);
 
@@ -169,6 +188,9 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->host, "www.xxx.com") == 0);
 	assert_true(strcmp(request->schema, "http") == 0);
 	assert_true(strcmp(request->path, "/") == 0);
+
+	memset(request, 0, sizeof(http_request_t));
+	http_parser_init(parser, HTTP_REQUEST);
 
 	recved = strlen(messages[2]);
 
@@ -182,6 +204,9 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->path, "/test") == 0);
 	assert_true(strcmp(request->port, "") == 0);
 
+	memset(request, 0, sizeof(http_request_t));
+	http_parser_init(parser, HTTP_REQUEST);
+
 	recved = strlen(messages[3]);
 
 	nparsed = http_parser_execute(parser, settings, messages[3], recved);
@@ -193,6 +218,20 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->schema, "https") == 0);
 	assert_true(strcmp(request->path, "/test") == 0);
 	assert_true(strcmp(request->port, "443") == 0);
+
+	memset(request, 0, sizeof(http_request_t));
+	http_parser_init(parser, HTTP_REQUEST);
+
+	assert_true(strcmp(request->host, "") == 0);
+	recved = strlen(messages[4]);
+
+	nparsed = http_parser_execute(parser, settings, messages[4], recved);
+
+	assert_true(parser->http_errno == HPE_OK);
+	assert_true(nparsed == recved);
+
+	assert_true(strcmp(request->host, "192.168.56.101") == 0);
+	assert_true(strcmp(request->schema, "http") == 0);
 }
 
 int main() {
