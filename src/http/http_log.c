@@ -46,7 +46,7 @@ bool http_log_set_file(const char *path) {
 void log_http_request(http_request_t *request, http_response_t *response) {
 	pthread_mutex_lock(&lock);
 	FILE *stream = file != NULL ? file : stdout;
-	char url[64] = {0};
+	char url[256] = {0};
 	if (strcmp(request->schema, "") != 0) {
 		strcpy(url, request->schema);
 		strcat(url, "://");
