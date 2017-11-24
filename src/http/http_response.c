@@ -4,9 +4,7 @@
 
 #include "http_response.h"
 
-static __thread char *local_content;
 static __thread size_t local_content_len;
-static __thread size_t local_alloc_content_size;
 
 static char *get_status_string(enum http_status status) {
     switch (status) {
@@ -222,26 +220,6 @@ int response_on_header_value_cb(http_parser *parser, const char *at, size_t len)
 
 int response_on_body_cb(http_parser *parser, const char *at, size_t len) {
     if (!parser->data) return -1;
-
-    if (local_content_len == 0) {
-        local_alloc_content_size = 2 * sizeof(char) * len;
-        local_content = malloc(local_alloc_content_size);
-
-        if (local_content == NULL) {
-            return -1;
-        }
-
-    } else if (local_content_len != 0
-        && (local_content_len + len) > local_alloc_content_size) {
-            local_alloc_content_size += 2 * sizeof(char) * len;
-            local_content = realloc(local_content, local_alloc_content_size);
-
-            if (local_content == NULL) {
-                return -1;
-            }
-    }
-
-    memcpy(local_content + local_content_len, at, len);
     local_content_len += len;
     return 0;
 }
@@ -256,69 +234,11 @@ int response_on_message_complete_cb(http_parser *parser) {
     response->http_minor = parser->http_minor;
 
     if (local_content_len != 0) {
-        response->content = local_content;
         response->content_length = local_content_len;
-        local_content = NULL;
         local_content_len = 0;
-        local_alloc_content_size = 0;
     }
 
     return 0;
-}
-
-bool make_response_string(http_response_t *response, char **dst, size_t *dst_size) {
-    http_headers_t *headers;
-    size_t buf_size;
-    char *buf;
-    int i;
-
-    headers = &response->headers;
-    buf_size = response->content_length + 2048;
-    *dst = NULL;
-    *dst_size = 0;
-    buf = malloc(buf_size);
-
-    if (!buf) {
-        return false;
-    }
-
-    memset(buf, 0, buf_size);
-
-    sprintf(buf, "HTTP/%d.%d %s\r\n", response->http_major,
-        response->http_minor, get_status_string(response->status));
-
-    for (i = 0; i < headers->num_headers; i++) {
-        if (strlen(buf) + 1 > buf_size) {
-            buf_size += 1024;
-            buf = realloc(buf, buf_size);
-            if (!buf) {
-                return false;
-            }
-        }
-
-        strcat(buf, headers->field[i]);
-        strcat(buf, ": ");
-        strcat(buf, headers->value[i]);
-        strcat(buf, "\r\n");
-    }
-    strcat(buf, "\r\n");
-
-    *dst_size = strlen(buf) + response->content_length;
-
-    *dst = malloc(*dst_size);
-    if (!(*dst)) {
-        free(buf);
-        *dst_size = 0;
-        return false;
-    }
-
-    memset(*dst, 0, *dst_size);
-    
-    memcpy(*dst, buf, strlen(buf));
-    memcpy(*dst + strlen(buf), response->content, response->content_length);
-
-    free(buf);
-    return true;
 }
 
 void print_http_response(http_response_t *response) {

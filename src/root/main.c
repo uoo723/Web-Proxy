@@ -271,10 +271,6 @@ static void thread_main(void *data) {
         free(request->content);
     }
 
-    if (response->content_length != 0) {
-        free(response->content);
-    }
-
     free(request);
     free(response);
     close(args->sockfd);
