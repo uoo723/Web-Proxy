@@ -21,6 +21,7 @@
 
 #define BACKLOG 10
 #define THREAD_NUM 8
+#define BUFFER_SIZE (80 * 1024)
 #define CACHE_SIZE (512 * 1024 * 1024)  // 5MB
 #define OBJECT_SIZE (512 * 1024)        // 5KB
 
@@ -31,24 +32,9 @@ typedef struct {
     char ip[INET_ADDRSTRLEN];
 } args_t;
 
-typedef threadpool threadpool_t;
-
-static void sigpipe_handler(int signum) { /* Do nothing */ }
-
 static void error(const char *str) {
 	perror(str);
 	exit(EXIT_FAILURE);
-}
-
-static size_t get_sock_buf_size(int sockfd, int optname) {
-    size_t ret = 0;
-    socklen_t opt_size = sizeof(ret);
-    if (getsockopt(sockfd, SOL_SOCKET, optname, &ret, &opt_size)) {
-        perror("getsockopt() failed");
-        return 0;
-    }
-
-    return ret;
 }
 
 // get addrinfo struct from hostname. result must be free'd using freeaddrinfo() after use.
@@ -77,25 +63,11 @@ static bool rcv_request(int sockfd, http_request_t *request) {
     http_parser *parser;
     http_parser_settings settings;
     int nparsed, recved;
-    size_t sock_rcv_buf_size;
-    char *buf;
-
-    sock_rcv_buf_size = get_sock_buf_size(sockfd, SO_RCVBUF);
-    if (sock_rcv_buf_size == 0) {
-        fprintf(stderr, "sock_rcv_buf_size is 0\n");
-        return false;
-    }
+    char buf[BUFFER_SIZE] = {0};
 
     parser = malloc(sizeof(http_parser));
     if (!parser) {
         perror("parser cannot be initialized");
-        return false;
-    }
-
-    buf = malloc(sock_rcv_buf_size);
-    if (!buf) {
-        perror("buf cannot be initialized");
-        free(parser);
         return false;
     }
 
@@ -110,53 +82,38 @@ static bool rcv_request(int sockfd, http_request_t *request) {
     parser->data = request;
 
     while (!request->on_message_completed) {
-        if ((recved = recv(sockfd, buf, sock_rcv_buf_size, 0)) == -1) {
-            if (errno == EPIPE) {
-                break;
-            } else if (errno == EPROTOTYPE) {
-                continue;
-            } else {
-                perror("recv failed");
-                free(parser);
-                free(buf);
-                return false;
-            }
+        if ((recved = recv(sockfd, buf, BUFFER_SIZE, 0)) == -1) {
+            perror("recv() failed");
+            free(parser);
+            return false;
         }
 
         nparsed = http_parser_execute(parser, &settings, buf, recved);
         if (parser->upgrade) {
             fprintf(stderr, "upgrade is not implemented\n");
-            free(parser);
-            free(buf);
-            return false;
         }
 
         if (nparsed != recved) {
             fprintf(stderr, "nparsed != recved\n");
             free(parser);
-            free(buf);
             return false;
         }
     }
 
     free(parser);
-    free(buf);
     return true;
 }
 
 // Called from thread. send request to origin server. and receive its response.
 // The client side of proxy.
-static bool send_request(http_request_t *request, http_response_t *response) {
-    int sockfd;
+// sockfd will be used in rcv_and_send_response().
+static bool send_request(http_request_t *request, http_response_t *response,
+    int *sockfd) {
     struct addrinfo *addrinfo, *rp;
-    size_t sock_snd_buf_size;
-    size_t sock_rcv_buf_size;
     size_t remaining, offset, sent;
-    size_t recved, nparsed;
     size_t req_size;
-    char *buf, *req_str;
-    http_parser *parser;
-    http_parser_settings settings;
+    char *req_str;
+    char buf[BUFFER_SIZE] = {0};
 
     if (request->host == NULL || strcmp(request->host, "") == 0) {
         fprintf(stderr, "hostname is not specified\n");
@@ -169,14 +126,14 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     }
 
     for (rp = addrinfo; rp != NULL; rp = rp->ai_next) {
-        if ((sockfd = socket(rp->ai_family, rp->ai_socktype,
+        if ((*sockfd = socket(rp->ai_family, rp->ai_socktype,
             rp->ai_protocol)) == -1)
             continue;
 
-        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
+        if (connect(*sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
             break;
 
-        close(sockfd);
+        close(*sockfd);
     }
 
     if (rp == NULL) {
@@ -186,26 +143,9 @@ static bool send_request(http_request_t *request, http_response_t *response) {
 
     freeaddrinfo(addrinfo);
 
-    sock_snd_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
-    sock_rcv_buf_size = get_sock_buf_size(sockfd, SO_RCVBUF);
-
-    if (sock_snd_buf_size == 0 || sock_rcv_buf_size == 0) {
-        fprintf(stderr, "sock_snd_buf_size is 0\n");
-        close(sockfd);
-        return false;
-    }
-
-    buf = malloc(sock_snd_buf_size);
-    if (!buf) {
-        perror("buf cannot be initialized");
-        close(sockfd);
-        return false;
-    }
-
     if (!make_request_string(request, &req_str, &req_size)) {
         fprintf(stderr, "make_request_string() failed\n");
-        free(buf);
-        close(sockfd);
+        close(*sockfd);
         return false;
     }
 
@@ -215,18 +155,17 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     while (remaining != 0) {
         size_t buf_size;
 
-        if (remaining <= sock_snd_buf_size) {
+        if (remaining <= BUFFER_SIZE) {
             buf_size = remaining;
         } else {    // remaining > sock_snd_buf_size
-            buf_size = sock_snd_buf_size;
+            buf_size = BUFFER_SIZE;
         }
 
         memcpy(buf, req_str + offset, buf_size);
-        if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
+        if ((sent = send(*sockfd, buf, buf_size, 0)) == -1) {
             perror("send() failed");
-            free(buf);
             free(req_str);
-            close(sockfd);
+            close(*sockfd);
             return false;
         }
 
@@ -235,24 +174,24 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     }
 
     free(req_str);
+    return true;
+}
 
-// =========================================================================
-
-    // rcv
-    buf = realloc(buf, sock_rcv_buf_size);
-
-    if (!buf) {
-        perror("buf cannot be initialized");
-        close(sockfd);
-        return false;
-    }
+// Called from thread.
+// receive response from origin server and forward to client.
+// server_sockfd was created in send_request.
+// We do not need to close client_sockfd, becuase it will be closed end of the thread_main()
+static bool rcv_and_send_response(int server_sockfd, int client_sockfd,
+    http_response_t *response) {
+    http_parser *parser;
+    http_parser_settings settings;
+    size_t recved, nparsed, sent;
+    char buf[BUFFER_SIZE] = {0};
 
     parser = malloc(sizeof(http_parser));
-
     if (!parser) {
         perror("parser cannot be initialized");
-        free(buf);
-        close(sockfd);
+        close(server_sockfd);
         return false;
     }
 
@@ -265,19 +204,14 @@ static bool send_request(http_request_t *request, http_response_t *response) {
     http_parser_init(parser, HTTP_RESPONSE);
     parser->data = response;
 
+    // set_sock_blocking(server_sockfd, false);
+
     while (!response->on_message_completed) {
-        if ((recved = recv(sockfd, buf, sock_rcv_buf_size, 0)) == -1) {
-            if (errno == EPIPE) {
-                break;
-            } else if (errno == EPROTOTYPE) {
-                continue;
-            } else {
-                perror("recv failed");
-                free(parser);
-                free(buf);
-                close(sockfd);
-                return false;
-            }
+        if ((recved = recv(server_sockfd, buf, BUFFER_SIZE, 0)) == -1) {
+            perror("recv() failed");
+            free(parser);
+            close(server_sockfd);
+            return false;
         }
 
         nparsed = http_parser_execute(parser, &settings, buf, recved);
@@ -285,69 +219,19 @@ static bool send_request(http_request_t *request, http_response_t *response) {
         if (nparsed != recved) {
             fprintf(stderr, "nparsed != recved\n");
             free(parser);
-            free(buf);
-            close(sockfd);
+            close(server_sockfd);
             return false;
         }
-    }
 
-    free(buf);
-    close(sockfd);
-    return true;
-}
-
-// Called from thread. send response received by origin server to client.
-static bool send_response(int sockfd, http_response_t *response) {
-    size_t sock_snd_buf_size;
-    size_t sent, remaining, offset;
-    size_t res_size;
-    char *buf;
-    char *res_str;
-
-    sock_snd_buf_size = get_sock_buf_size(sockfd, SO_SNDBUF);
-    if (sock_snd_buf_size == 0) {
-        fprintf(stderr, "sock_snd_buf_size is 0\n");
-        return false;
-    }
-
-    buf = malloc(sock_snd_buf_size);
-    if (!buf) {
-        perror("buf cannot be initialized");
-        return false;
-    }
-
-    if (!make_response_string(response, &res_str, &res_size)) {
-        fprintf(stderr, "make_response_string() failed\n");
-        free(buf);
-        return false;
-    }
-
-    remaining = res_size;
-    offset = 0;
-
-    while (remaining != 0) {
-        size_t buf_size;
-
-        if (remaining <= sock_snd_buf_size) {
-            buf_size = remaining;
-        } else {
-            buf_size = sock_snd_buf_size;
-        }
-
-        memcpy(buf, res_str + offset, buf_size);
-        if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
+        if ((sent = send(client_sockfd, buf, recved, 0)) == -1) {
             perror("send() failed");
-            free(buf);
-            free(res_str);
+            free(parser);
+            close(server_sockfd);
             return false;
         }
-
-        remaining -= sent;
-        offset += sent;
     }
 
-    free(buf);
-    free(res_str);
+    close(server_sockfd);
     return true;
 }
 
@@ -355,6 +239,7 @@ static void thread_main(void *data) {
     args_t *args = (args_t *) data;
     http_request_t *request = malloc(sizeof(http_request_t));
     http_response_t *response = malloc(sizeof(http_response_t));
+    int server_sockfd;
 
     if (!request) {
         perror("request cannot be initialized");
@@ -374,9 +259,9 @@ static void thread_main(void *data) {
 
     if (!rcv_request(args->sockfd, request)) {
         fprintf(stderr, "rcv_request() failed\n");
-    } else if (!send_request(request, response)) {
+    } else if (!send_request(request, response, &server_sockfd)) {
         fprintf(stderr, "send_request() failed\n");
-    } else if (!send_response(args->sockfd, response)){
+    } else if (!rcv_and_send_response(server_sockfd, args->sockfd, response)){
         fprintf(stderr, "send_response() failed\n");
     } else {
         log_http_request(request, response);
@@ -397,12 +282,6 @@ static void thread_main(void *data) {
 }
 
 int main(int argc, char *argv[]) {
-    struct sigaction act;
-    memset(&act, 0, sizeof(act));
-    act.sa_handler = sigpipe_handler;
-    sigaction(SIGPIPE, &act, NULL);     // Install handler for SIGPIPE
-
-	threadpool_t thpool;
 	int sockfd;
 	int opt;
 	int port;
@@ -418,11 +297,6 @@ int main(int argc, char *argv[]) {
 	if (!(port >= 1024 && port <= 65535)) {
 		fprintf(stderr, "port number must be in (1024 <= port <= 65535)\n");
 		exit(EXIT_FAILURE);
-	}
-
-	// Create thread pool
-	if ((thpool = thpool_init(THREAD_NUM)) == NULL) {
-		error("thpool initialization failed");
 	}
 
     // Create lru cache object
@@ -477,6 +351,7 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         args_t *args = malloc(sizeof(args_t));
+        pthread_t pid;
         struct sockaddr_in client_addr;
         socklen_t client_addrlen = sizeof(struct sockaddr_in);
 
@@ -493,11 +368,10 @@ int main(int argc, char *argv[]) {
         inet_ntop(AF_INET, &client_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
         strcpy(args->ip, ip_str);
 
-        thpool_add_work(thpool, (void *) thread_main, (void *) args);
+        pthread_create(&pid, NULL, (void *) thread_main, (void *) args);
     }
 
     close(sockfd);
-    thpool_destroy(thpool);
 
     return 0;
 }
