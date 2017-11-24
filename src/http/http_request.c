@@ -10,6 +10,7 @@ void print_http_request(http_request_t *request) {
     int i;
     http_headers_t headers = request->headers;
 
+    printf("host: %s\n", request->host);
     printf("path: %s\n", request->path);
     printf("method: %s\n", http_method_str(request->method));
     for (i = 0; i < headers.num_headers; i++) {
@@ -222,7 +223,7 @@ bool make_request_string(http_request_t *request, char **dst, size_t *dst_size) 
     }
 
     memset(*dst, 0, *dst_size);
-    
+
     memcpy(*dst, buf, strlen(buf));
     memcpy(*dst + strlen(buf), request->content, request->content_length);
 
