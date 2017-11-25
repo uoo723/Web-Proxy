@@ -22,9 +22,11 @@
 #define BACKLOG 10
 #define THREAD_NUM 8
 #define BUFFER_SIZE (80 * 1024)
-#define CACHE_SIZE (512 * 1024 * 1024)  // 5MB
-#define OBJECT_SIZE (512 * 1024)        // 5KB
+#define CACHE_SIZE (5 * 1024 * 1024)  // 5MB
+#define OBJECT_SIZE (512 * 1024)        // 512KB
 
+// key: <request->host>:<requset->port>/<request->path>
+// value: entire response
 static lru_cache_t *cache;
 
 typedef struct {
@@ -37,7 +39,20 @@ static void error(const char *str) {
 	exit(EXIT_FAILURE);
 }
 
-// get addrinfo struct from hostname. result must be free'd using freeaddrinfo() after use.
+static void print_cache_status() {
+    size_t total_memory = cache->total_memory;
+    size_t free_memory = cache->free_memory;
+    size_t in_use_memory = total_memory - free_memory;
+
+    total_memory /= 1024 * 1024;
+    in_use_memory /= 1024;
+
+    printf("%luKB/%luMB\n", in_use_memory, total_memory);
+    fflush(stdout);
+}
+
+// get addrinfo struct from hostname. result must be free'd using
+// freeaddrinfo() after use.
 static bool get_addrinfo(const char *hostname, const char *port,
         struct addrinfo **result) {
     struct addrinfo hints;
@@ -59,11 +74,16 @@ static bool get_addrinfo(const char *hostname, const char *port,
 
 // Called from thread. receive request from client.
 // The server side of proxy.
-static bool rcv_request(int sockfd, http_request_t *request) {
+// If cache is existed, hit is set to true. And cache is sent directly to client.
+static bool rcv_request(int sockfd, http_request_t *request, bool *hit) {
     http_parser *parser;
     http_parser_settings settings;
     int nparsed, recved;
     char buf[BUFFER_SIZE] = {0};
+    char *key, *value;
+    size_t key_len, value_len;
+    size_t sent, remaining, offset;
+    lru_cache_error err;
 
     parser = malloc(sizeof(http_parser));
     if (!parser) {
@@ -90,7 +110,9 @@ static bool rcv_request(int sockfd, http_request_t *request) {
 
         nparsed = http_parser_execute(parser, &settings, buf, recved);
         if (parser->upgrade) {
-            fprintf(stderr, "upgrade is not implemented\n");
+            fprintf(stderr, "HTTP tunnel is not implemented\n");
+            free(parser);
+            return false;
         }
 
         if (nparsed != recved) {
@@ -100,7 +122,56 @@ static bool rcv_request(int sockfd, http_request_t *request) {
         }
     }
 
+    key_len = strlen(request->host) + strlen(request->port)
+        + 1 /* ":" */ + strlen(request->path) + 1;
+    key = malloc(key_len);
+
+    if (!key) {
+        perror("key cannot be initialized");
+        free(parser);
+        return false;
+    }
+
+    strcpy(key, request->host);
+    strcat(key, ":");
+    strcat(key, request->port);
+    strcat(key, request->path);
+
+    err = lru_cache_get(cache, key, key_len, (void **) &value, &value_len);
+    if (err != LRU_CACHE_NO_ERROR) {
+        fprintf(stderr, "lru_cache_get() failed\n");
+        free(parser);
+        free(key);
+        return false;
+    }
     free(parser);
+    free(key);
+
+    *hit = value ? true : false;
+    if (*hit) {    // Hit.
+        remaining = value_len;
+        offset = 0;
+
+        while (remaining != 0) {
+            size_t buf_size;
+
+            if (remaining <= BUFFER_SIZE) {
+                buf_size = remaining;
+            } else {
+                buf_size = BUFFER_SIZE;
+            }
+
+            memcpy(buf, value + offset, buf_size);
+            if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
+                perror("send() failed");
+                return false;
+            }
+
+            remaining -= sent;
+            offset += sent;
+        }
+    }
+
     return true;
 }
 
@@ -180,13 +251,18 @@ static bool send_request(http_request_t *request, http_response_t *response,
 // Called from thread.
 // receive response from origin server and forward to client.
 // server_sockfd was created in send_request.
-// We do not need to close client_sockfd, becuase it will be closed end of the thread_main()
+// We do not need to close client_sockfd, becuase it will be closed end of
+// the thread_main().
+// Store response in cache.
 static bool rcv_and_send_response(int server_sockfd, int client_sockfd,
-    http_response_t *response) {
+    http_request_t *request, http_response_t *response) {
     http_parser *parser;
     http_parser_settings settings;
     size_t recved, nparsed, sent;
     char buf[BUFFER_SIZE] = {0};
+    char *key, *value;
+    size_t key_len, value_len, offset;
+    lru_cache_error err;
 
     parser = malloc(sizeof(http_parser));
     if (!parser) {
@@ -203,8 +279,9 @@ static bool rcv_and_send_response(int server_sockfd, int client_sockfd,
 
     http_parser_init(parser, HTTP_RESPONSE);
     parser->data = response;
-
-    // set_sock_blocking(server_sockfd, false);
+    value = NULL;
+    value_len = 0;
+    offset = 0;
 
     while (!response->on_message_completed) {
         if ((recved = recv(server_sockfd, buf, BUFFER_SIZE, 0)) == -1) {
@@ -223,23 +300,80 @@ static bool rcv_and_send_response(int server_sockfd, int client_sockfd,
             return false;
         }
 
-        if ((sent = send(client_sockfd, buf, recved, 0)) == -1) {
-            perror("send() failed");
+        value_len += recved;
+
+        if (!value) {
+            value = malloc(value_len);
+        } else {
+            value = realloc(value, value_len);
+        }
+
+        if (!value) {
+            perror("value cannot be initialized");
+            fprintf(stderr, "nparsed != recved\n");
             free(parser);
             close(server_sockfd);
             return false;
         }
+
+        memcpy(value + offset, buf, recved);
+
+        offset += recved;
+
+        if ((sent = send(client_sockfd, buf, recved, 0)) == -1) {
+            perror("send() failed");
+            free(parser);
+            free(value);
+            close(server_sockfd);
+            return false;
+        }
+    }
+
+    free(parser);
+
+    if (value_len <= OBJECT_SIZE) {
+        key_len = strlen(request->host) + strlen(request->port)
+            + 1 /* ":" */ + strlen(request->path) + 1;
+        key = malloc(key_len);
+        if (!key) {
+            perror("key cannot be initialized");
+            free(value);
+            close(server_sockfd);
+            return false;
+        }
+
+        strcpy(key, request->host);
+        strcat(key, ":");
+        strcat(key, request->port);
+        strcat(key, request->path);
+
+        // Note: Do not free value if err == LRU_CACHE_NO_ERROR.
+        err = lru_cache_set(cache, key, key_len, value, value_len);
+        if (err != LRU_CACHE_NO_ERROR) {
+            fprintf(stderr, "lru_cache_set() failed\n");
+            free(key);
+            free(value);
+            close(server_sockfd);
+            return false;
+        }
+
+        printf("caching - key: %s, ", key);
+        print_cache_status();
+
+        free(key);
     }
 
     close(server_sockfd);
     return true;
 }
 
+// thread entry point.
 static void thread_main(void *data) {
     args_t *args = (args_t *) data;
     http_request_t *request = malloc(sizeof(http_request_t));
     http_response_t *response = malloc(sizeof(http_response_t));
     int server_sockfd;
+    bool hit;
 
     if (!request) {
         perror("request cannot be initialized");
@@ -257,11 +391,16 @@ static void thread_main(void *data) {
 
     strcpy(request->ip, args->ip);
 
-    if (!rcv_request(args->sockfd, request)) {
+    if (!rcv_request(args->sockfd, request, &hit)) {
         fprintf(stderr, "rcv_request() failed\n");
+    } else if (hit) {
+        printf("hit ");
+        print_cache_status();
+        log_http_request(request, response);
     } else if (!send_request(request, response, &server_sockfd)) {
         fprintf(stderr, "send_request() failed\n");
-    } else if (!rcv_and_send_response(server_sockfd, args->sockfd, response)){
+    } else if (!rcv_and_send_response(server_sockfd, args->sockfd,
+            request, response)){
         fprintf(stderr, "send_response() failed\n");
     } else {
         log_http_request(request, response);
