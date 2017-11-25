@@ -77,45 +77,53 @@ static void test_lru_set(void **state) {
 static void test_lru_get(void **state) {
     lru_cache_t *cache = (lru_cache_t *) *state;
     char *value;
+    size_t value_len;
     lru_cache_error err;
-    err = lru_cache_get(cache, keys[0], strlen(keys[0])+1, (void **) &value);
+    err = lru_cache_get(cache, keys[0], strlen(keys[0])+1,
+        (void **) &value, &value_len);
 
     assert_true(err == LRU_CACHE_NO_ERROR);
     assert_non_null(value);
+    assert_true(value_len == strlen(values[0]) + 1);
     assert_true(strcmp(value, values[0]) == 0);
 
-    err = lru_cache_get(cache, keys[1], strlen(keys[1])+1, (void **) &value);
+    err = lru_cache_get(cache, keys[1], strlen(keys[1])+1,
+        (void **) &value, &value_len);
 
     assert_true(err == LRU_CACHE_NO_ERROR);
     assert_null(value);
+    assert_true(value_len == 0);
 }
 
 static void test_lru_delete(void **state) {
     lru_cache_t *cache = (lru_cache_t *) *state;
     lru_cache_error err;
-    err = lru_cache_delete(cache, keys[0], strlen(keys[0])+1);
+    char *value;
+    size_t value_len;
 
+    err = lru_cache_delete(cache, keys[0], strlen(keys[0])+1);
     assert_true(err == LRU_CACHE_NO_ERROR);
 
-    char *value;
-
-    err = lru_cache_get(cache, keys[0], strlen(keys[0])+1, (void **) &value);
-
+    err = lru_cache_get(cache, keys[0], strlen(keys[0])+1,
+        (void **) &value, &value_len);
     assert_true(err == LRU_CACHE_NO_ERROR);
     assert_null(value);
+    assert_true(value_len == 0);
 }
 
 static void test_hit(void **state) {
     lru_cache_t *cache = (lru_cache_t *) *state;
     lru_cache_error err;
     char *value;
+    size_t value_len;
 
     err = lru_cache_get(cache, long_keys[0], strlen(long_keys[0])+1,
-        (void **) &value);
+        (void **) &value, &value_len);
 
     // First no hit.
     assert_true(err == LRU_CACHE_NO_ERROR);
     assert_null(value);
+    assert_true(value_len == 0);
 
     // Store cache.
     err = lru_cache_set(cache, long_keys[0], strlen(long_keys[0])+1,
@@ -123,11 +131,12 @@ static void test_hit(void **state) {
     assert_true(err == LRU_CACHE_NO_ERROR);
 
     err = lru_cache_get(cache, long_keys[0], strlen(long_keys[0])+1,
-        (void **) &value);
+        (void **) &value, &value_len);
 
     // hit.
     assert_true(err == LRU_CACHE_NO_ERROR);
     assert_non_null(value);
+    assert_true(value_len == strlen(long_values[0]) + 1);
     assert_true(memcmp(long_values[0], value, strlen(long_keys[0])+1) == 0);
 }
 

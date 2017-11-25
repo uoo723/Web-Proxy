@@ -62,7 +62,7 @@ lru_cache_error lru_cache_set(lru_cache_t *cache, void *key, size_t key_len,
  *
  */
 lru_cache_error lru_cache_get(lru_cache_t *cache, void *key, size_t key_len,
-	void **value);
+	void **value, size_t *value_len);
 
 /**
  * Delete item associated by key from cache.

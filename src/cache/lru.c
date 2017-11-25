@@ -298,7 +298,7 @@ lru_cache_error lru_cache_set(lru_cache_t *cache, void *key, size_t key_len,
 }
 
 lru_cache_error lru_cache_get(lru_cache_t *cache, void *key, size_t key_len,
-	void **value) {
+	void **value, size_t *value_len) {
 	lru_cache_test_missing_cache(cache);
 	lru_cache_test_missing_key(key);
 
@@ -313,9 +313,11 @@ lru_cache_error lru_cache_get(lru_cache_t *cache, void *key, size_t key_len,
 
 	if (item) {
 		*value = item->value;
+		*value_len = item->value_len;
 		item->access_count++;
 	} else {
 		*value = NULL;
+		*value_len = 0;
 	}
 
 	unlock_cache(cache);
