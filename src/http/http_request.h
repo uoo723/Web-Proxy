@@ -10,9 +10,6 @@ extern "C" {
 #include "http_parser.h"
 #include "http_common.h"
 
-#define MAX_HEADERS 50
-#define MAX_ELEMENT_SIZE 500
-
 #define SCHEMA_LEN 16
 #define PORT_LEN 8
 #define HOST_LEN 128
