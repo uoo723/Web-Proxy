@@ -100,8 +100,6 @@ static void test_response_parse(void **state) {
 		"\t\t<h1>Hello, World!</h1>\n"
 		"\t</body>\n"
 		"</html>";
-
-	assert_string_equal(response->content, body);
 }
 
 int main() {

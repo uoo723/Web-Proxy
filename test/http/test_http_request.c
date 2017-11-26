@@ -132,7 +132,7 @@ static void test_http_request(void **state) {
 		"Keep-Alive");
 	assert_string_equal(find_header_value(&request->headers, "Content-Length"),
 		"11");
-	assert_string_equal(request->body, "sample body");
+	assert_string_equal(request->content, "sample body");
 }
 
 static void test_failed_http_request(void **state) {
@@ -202,7 +202,7 @@ static void test_parse_url(void **state) {
 	assert_true(strcmp(request->host, "www.xxx.com") == 0);
 	assert_true(strcmp(request->schema, "https") == 0);
 	assert_true(strcmp(request->path, "/test") == 0);
-	assert_true(strcmp(request->port, "") == 0);
+	assert_true(strcmp(request->port, "80") == 0);
 
 	memset(request, 0, sizeof(http_request_t));
 	http_parser_init(parser, HTTP_REQUEST);
@@ -216,7 +216,7 @@ static void test_parse_url(void **state) {
 
 	assert_true(strcmp(request->host, "www.xxx.com") == 0);
 	assert_true(strcmp(request->schema, "https") == 0);
-	assert_true(strcmp(request->path, "/test") == 0);
+	assert_true(strcmp(request->path, "/test/") == 0);
 	assert_true(strcmp(request->port, "443") == 0);
 
 	memset(request, 0, sizeof(http_request_t));
