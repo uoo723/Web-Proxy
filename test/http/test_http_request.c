@@ -61,13 +61,48 @@ static char *messages[1024] = {
 	"sample body"
 };
 
-static int setup(void **state) {
-	state_t *s = malloc(sizeof(state_t));
-	http_parser *parser = malloc(sizeof(http_parser));
-	http_parser_settings *settings = malloc(sizeof(http_parser_settings));
-	http_request_t *request = malloc(sizeof(http_request_t));
+static bool clear_http_request(http_request_t *request) {
+	http_headers_t *headers;
+	free_http_headers(request->headers);
+	if (request->content_length != 0)
+		free(request->content);
 
-	if (s == NULL || parser == NULL || settings == NULL || request == NULL) {
+	if ((headers = init_http_headers(request->headers->max_num_headers)) == NULL)
+		return false;
+
+	memset(request, 0, sizeof(http_request_t));
+	request->headers = headers;
+
+	return true;
+}
+
+static int setup(void **state) {
+	state_t *s;
+	http_parser *parser;
+	http_parser_settings *settings;
+	http_request_t *request;
+
+	if ((s = malloc(sizeof(state_t))) == NULL) {
+		return -1;
+	}
+
+	if ((parser = malloc(sizeof(http_parser))) == NULL) {
+		free(s);
+		return -1;
+	}
+
+	memset(parser, 0, sizeof(http_parser));
+
+	if ((settings = malloc(sizeof(http_parser_settings))) == NULL) {
+		free(s);
+		free(parser);
+		return -1;
+	}
+
+	if ((request = init_http_request(0)) == NULL) {
+		free(s);
+		free(parser);
+		free(settings);
 		return -1;
 	}
 
@@ -77,9 +112,6 @@ static int setup(void **state) {
 	settings->on_header_value = request_on_header_value_cb;
 	settings->on_body = request_on_body_cb;
 	settings->on_message_complete = request_on_message_complete_cb;
-
-	memset(parser, 0, sizeof(http_parser));
-	memset(request, 0, sizeof(http_request_t));
 
 	s->parser = parser;
 	s->settings = settings;
@@ -94,7 +126,7 @@ static int teardown(void **state) {
 	state_t *s = (state_t *) *state;
 	free(s->parser);
 	free(s->settings);
-	free(s->request);
+	free_http_request(s->request);
 	free(s);
 
 	return 0;
@@ -120,19 +152,21 @@ static void test_http_request(void **state) {
 
 	assert_int_equal(request->method, HTTP_GET);
 	assert_int_equal(parser->http_errno, HPE_OK);
-	assert_string_equal(find_header_value(&request->headers, "User-Agent"),
+	assert_string_equal(find_header_value(request->headers, "User-Agent"),
 		"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)");
-	assert_string_equal(find_header_value(&request->headers, "Host"),
+	assert_string_equal(find_header_value(request->headers, "Host"),
 		"www.xxx.com");
-	assert_string_equal(find_header_value(&request->headers, "Accept-Language"),
+	assert_string_equal(find_header_value(request->headers, "Accept-Language"),
 		"en-us");
-	assert_string_equal(find_header_value(&request->headers, "Accept-Encoding"),
+	assert_string_equal(find_header_value(request->headers, "Accept-Encoding"),
 		"gzip, deflate");
-	assert_string_equal(find_header_value(&request->headers, "Connection"),
+	assert_string_equal(find_header_value(request->headers, "Connection"),
 		"Keep-Alive");
-	assert_string_equal(find_header_value(&request->headers, "Content-Length"),
+	assert_string_equal(find_header_value(request->headers, "Content-Length"),
 		"11");
 	assert_string_equal(request->content, "sample body");
+
+
 }
 
 static void test_failed_http_request(void **state) {
@@ -171,11 +205,13 @@ static void test_parse_url(void **state) {
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
 
-	assert_true(strcmp(request->host, "www.xxx.com") == 0);
-	assert_true(strcmp(request->schema, "http") == 0);
-	assert_true(strcmp(request->path, "/") == 0);
+	assert_string_equal(request->host, "www.xxx.com");
+	assert_string_equal(request->schema, "http");
+	assert_string_equal(request->path, "/");
 
-	memset(request, 0, sizeof(http_request_t));
+	if (!clear_http_request(request))
+		fail_msg("clear_http_request() failed\n");
+
 	http_parser_init(parser, HTTP_REQUEST);
 
 	recved = strlen(messages[1]);
@@ -185,11 +221,13 @@ static void test_parse_url(void **state) {
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
 
-	assert_true(strcmp(request->host, "www.xxx.com") == 0);
-	assert_true(strcmp(request->schema, "http") == 0);
-	assert_true(strcmp(request->path, "/") == 0);
+	assert_string_equal(request->host, "www.xxx.com");
+	assert_string_equal(request->schema, "http");
+	assert_string_equal(request->path, "/");
 
-	memset(request, 0, sizeof(http_request_t));
+	if (!clear_http_request(request))
+		fail_msg("clear_http_request() failed\n");
+
 	http_parser_init(parser, HTTP_REQUEST);
 
 	recved = strlen(messages[2]);
@@ -199,12 +237,14 @@ static void test_parse_url(void **state) {
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
 
-	assert_true(strcmp(request->host, "www.xxx.com") == 0);
-	assert_true(strcmp(request->schema, "https") == 0);
-	assert_true(strcmp(request->path, "/test") == 0);
-	assert_true(strcmp(request->port, "80") == 0);
+	assert_string_equal(request->host, "www.xxx.com");
+	assert_string_equal(request->schema, "https");
+	assert_string_equal(request->path, "/test");
+	assert_string_equal(request->port, "80");
 
-	memset(request, 0, sizeof(http_request_t));
+	if (!clear_http_request(request))
+		fail_msg("clear_http_request() failed\n");
+
 	http_parser_init(parser, HTTP_REQUEST);
 
 	recved = strlen(messages[3]);
@@ -214,15 +254,16 @@ static void test_parse_url(void **state) {
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
 
-	assert_true(strcmp(request->host, "www.xxx.com") == 0);
-	assert_true(strcmp(request->schema, "https") == 0);
-	assert_true(strcmp(request->path, "/test/") == 0);
-	assert_true(strcmp(request->port, "443") == 0);
+	assert_string_equal(request->host, "www.xxx.com");
+	assert_string_equal(request->schema, "https");
+	assert_string_equal(request->path, "/test/");
+	assert_string_equal(request->port, "443");
 
-	memset(request, 0, sizeof(http_request_t));
+	if (!clear_http_request(request))
+		fail_msg("clear_http_request() failed\n");
+		
 	http_parser_init(parser, HTTP_REQUEST);
 
-	assert_true(strcmp(request->host, "") == 0);
 	recved = strlen(messages[4]);
 
 	nparsed = http_parser_execute(parser, settings, messages[4], recved);
@@ -230,8 +271,8 @@ static void test_parse_url(void **state) {
 	assert_true(parser->http_errno == HPE_OK);
 	assert_true(nparsed == recved);
 
-	assert_true(strcmp(request->host, "192.168.56.101") == 0);
-	assert_true(strcmp(request->schema, "http") == 0);
+	assert_string_equal(request->host, "192.168.56.101");
+	assert_string_equal(request->schema, "http");
 }
 
 int main() {

@@ -3,22 +3,94 @@
 #include <string.h>
 #include "http_common.h"
 
-void set_header(http_headers_t *headers, char *field, char *value) {
+http_headers_t *init_http_headers(size_t max_num_headers) {
+    http_headers_t *headers;
+
+    headers = malloc(sizeof(http_headers_t));
+    if (!headers) {
+        return NULL;
+    }
+
+    memset(headers, 0, sizeof(http_headers_t));
+    headers->max_num_headers =
+        max_num_headers <= 0 ? DEFAULT_MAX_HEADERS : max_num_headers;
+
+    headers->field = malloc(sizeof(char *) * headers->max_num_headers);
+    if (!headers->field) {
+        free(headers);
+        return NULL;
+    }
+    memset(headers->field, 0, sizeof(char *) * headers->max_num_headers);
+
+    headers->value = malloc(sizeof(char *) * headers->max_num_headers);
+    if (!headers->value) {
+        free(headers->field);
+        free(headers);
+        return NULL;
+    }
+    memset(headers->value, 0, sizeof(char *) * headers->max_num_headers);
+
+    return headers;
+}
+
+void free_http_headers(http_headers_t *headers) {
+    if (!headers) return;
+
     int i;
     for (i = 0; i < headers->num_headers; i++) {
+        free(headers->field[i]);
+        free(headers->value[i]);
+    }
+
+    free(headers->field);
+    free(headers->value);
+    free(headers);
+}
+
+bool set_header(http_headers_t *headers, const char *field, const char *value) {
+    if (!headers) {
+        return false;
+    }
+
+    int i;
+    char *temp;
+    for (i = 0; i < headers->num_headers; i++) {
         if (strcmp(headers->field[i], field) == 0) {
-            memset(headers->value[i], 0, MAX_ELEMENT_SIZE);
+            temp = headers->value[i];
+            headers->value[i] = malloc(strlen(value) + 1);
+            if (!headers->value[i]) {
+                headers->value[i] = temp;
+                return false;
+            }
+
+            free(temp);
             strcpy(headers->value[i], value);
-            return;
+            return true;
         }
+    }
+
+    if (headers->num_headers + 1 > headers->max_num_headers) {
+        return false;
+    }
+
+    headers->field[headers->num_headers] = malloc(strlen(field) + 1);
+    if (!headers->field[headers->num_headers]) {
+        return false;
+    }
+
+    headers->value[headers->num_headers] = malloc(strlen(value) + 1);
+    if (!headers->value[headers->num_headers]) {
+        free(headers->field[headers->num_headers]);
+        return false;
     }
 
     strcpy(headers->field[headers->num_headers], field);
     strcpy(headers->value[headers->num_headers], value);
     headers->num_headers++;
+    return true;
 }
 
-char *find_header_value(http_headers_t *headers, char *search) {
+char *find_header_value(http_headers_t *headers, const char *search) {
     int i;
     for (i = 0; i < headers->num_headers; i++) {
         if (strcmp(headers->field[i], search) == 0) {

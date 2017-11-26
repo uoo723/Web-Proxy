@@ -9,19 +9,16 @@
 
 static int setup(void **state) {
     http_headers_t *headers;
-    headers = malloc(sizeof(http_headers_t));
-    if (headers == NULL) {
+    if ((headers = init_http_headers(0)) == NULL) {
         return -1;
     }
-
-    memset(headers, 0, sizeof(http_headers_t));
     *state = headers;
-
     return 0;
 }
 
 static int teardown(void **state) {
-    free(*state);
+    http_headers_t *headers = (http_headers_t *) *state;
+    free_http_headers(headers);
     return 0;
 }
 

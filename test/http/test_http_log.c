@@ -17,7 +17,18 @@ static int setup(void **state) {
 	http_request_t *request = malloc(sizeof(http_request_t));
 	http_response_t *response = malloc(sizeof(http_response_t));
 
-	if (s == NULL || request == NULL || response == NULL) {
+	if ((s = malloc(sizeof(state_t))) == NULL) {
+		return -1;
+	}
+
+	if ((request = init_http_request(0)) == NULL) {
+		free(s);
+		return -1;
+	}
+
+	if ((response = init_http_response(0)) == NULL) {
+		free(s);
+		free(request);
 		return -1;
 	}
 
@@ -37,8 +48,8 @@ static int setup(void **state) {
 
 static int teardown(void **state) {
 	state_t *s = (state_t *) *state;
-	free(s->request);
-	free(s->response);
+	free_http_request(s->request);
+	free_http_response(s->response);
 	free(s);
     return 0;
 }

@@ -16,11 +16,32 @@ typedef struct {
 } state_t;
 
 static int setup(void **state) {
-	state_t *s = malloc(sizeof(state_t));
+	state_t *s;
+	http_parser *parser;
+	http_parser_settings *settings;
+	http_response_t *response;
 
-	http_parser *parser = malloc(sizeof(http_parser));
-	http_parser_settings *settings = malloc(sizeof(http_parser_settings));
-	http_response_t *response = malloc(sizeof(http_response_t));
+	if ((s = malloc(sizeof(state_t))) == NULL) {
+		return -1;
+	}
+
+	if ((parser = malloc(sizeof(http_parser))) == NULL) {
+		free(s);
+		return -1;
+	}
+
+	if ((settings = malloc(sizeof(http_parser_settings))) == NULL) {
+		free(s);
+		free(parser);
+		return -1;
+	}
+
+	if ((response = init_http_response(0)) == NULL) {
+		free(s);
+		free(parser);
+		free(settings);
+		return -1;
+	}
 
 	http_parser_settings_init(settings);
 	settings->on_header_field = response_on_header_field_cb;
@@ -29,7 +50,6 @@ static int setup(void **state) {
 	settings->on_message_complete = response_on_message_complete_cb;
 
 	http_parser_init(parser, HTTP_RESPONSE);
-	memset(response, 0, sizeof(http_response_t));
 
 	parser->data = response;
 
@@ -62,7 +82,7 @@ static int teardown(void **state) {
 	state_t *s = (state_t *) *state;
 	free(s->parser);
 	free(s->settings);
-	free(s->response);
+	free_http_response(s->response);
 	free(s);
 
 	return 0;
@@ -85,11 +105,11 @@ static void test_response_parse(void **state) {
 	assert_true(parser->http_major == 1);
 	assert_true(parser->http_minor == 1);
 
-	assert_string_equal(find_header_value(&response->headers, "Date"),
+	assert_string_equal(find_header_value(response->headers, "Date"),
 		"Mon, 27 Jul 2009 12:28:53 GMT");
-	assert_string_equal(find_header_value(&response->headers, "Server"),
+	assert_string_equal(find_header_value(response->headers, "Server"),
 		"Apache/2.2.14 (Win32)");
-	assert_string_equal(find_header_value(&response->headers, "Last-Modified"),
+	assert_string_equal(find_header_value(response->headers, "Last-Modified"),
 		"Wed, 22 Jul 2009 19:15:56 GMT");
 
 	assert_true(response->content_length == 56);

@@ -413,14 +413,12 @@ static void http_tunnel(int client_sockfd, http_request_t *request) {
 
     freeaddrinfo(addrinfo);
 
-    response = malloc(sizeof(http_response_t));
-    if (!response) {
+    if ((response = init_http_response(0)) == NULL) {
         perror("response cannot be initialized");
         close(client_sockfd);
         close(server_sockfd);
         return;
     }
-    memset(response, 0, sizeof(http_response_t));
 
     response->http_major = request->http_major;
     response->http_minor = request->http_minor;
@@ -525,24 +523,21 @@ static void http_tunnel(int client_sockfd, http_request_t *request) {
 // thread entry point.
 static void thread_main(void *data) {
     args_t *args = (args_t *) data;
-    http_request_t *request = malloc(sizeof(http_request_t));
-    http_response_t *response = malloc(sizeof(http_response_t));
+    http_request_t *request;
+    http_response_t *response;
     int server_sockfd;
     bool hit, upgrade;
 
-    if (!request) {
+    if ((request = init_http_request(0)) == NULL) {
         perror("request cannot be initialized");
         return;
     }
 
-    if (!response) {
+    if ((response = init_http_response(0)) == NULL) {
         perror("response cannot be initialized");
         free(request);
         return;
     }
-
-    memset(request, 0, sizeof(http_request_t));
-    memset(response, 0, sizeof(http_response_t));
 
     strcpy(request->ip, args->ip);
 
@@ -575,12 +570,8 @@ static void thread_main(void *data) {
         log_http_request(request, response);
     }
 
-    if (request->content_length != 0) {
-        free(request->content);
-    }
-
-    free(request);
-    free(response);
+    free_http_request(request);
+    free_http_response(response);
     close(args->sockfd);
     free(args);
 }

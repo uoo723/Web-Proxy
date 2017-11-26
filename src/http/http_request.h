@@ -11,14 +11,15 @@ extern "C" {
 #include "http_common.h"
 
 #define SCHEMA_LEN 16
+#define PATH_LEN 256
 #define PORT_LEN 8
 #define HOST_LEN 128
 
 typedef struct {
-    char path[MAX_ELEMENT_SIZE];
+    char path[PATH_LEN];
     unsigned short http_major;
     unsigned short http_minor;
-    http_headers_t headers;
+    http_headers_t *headers;
     int content_length;
     char *content;
     int method;
@@ -30,6 +31,16 @@ typedef struct {
 } http_request_t;
 
 /**
+ * Init http_request_t.
+ */
+http_request_t *init_http_request(size_t max_num_headers);
+
+/**
+ * Free http_request_t.
+ */
+void free_http_request(http_request_t *request);
+
+/**
  * Print request.
  */
 void print_http_request(http_request_t *request);
@@ -39,7 +50,9 @@ int request_on_url_cb(http_parser *parser, const char *at, size_t len);
 int request_on_header_field_cb(http_parser *parser, const char *at, size_t len);
 int request_on_header_value_cb(http_parser *parser, const char *at, size_t len);
 int request_on_body_cb(http_parser *parser, const char *at, size_t len);
+int request_on_message_begin(http_parser *parser);
 int request_on_message_complete_cb(http_parser *parser);
+int request_on_headers_complete(http_parser *parser);
 /** ******************************************************************** */
 
 /**

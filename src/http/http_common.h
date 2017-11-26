@@ -4,8 +4,10 @@
 extern "C" {
 #endif
 
-#define MAX_HEADERS 50
-#define MAX_ELEMENT_SIZE 500
+#include <stdbool.h>
+#include <stddef.h>
+
+#define DEFAULT_MAX_HEADERS 50
 #define MAX_RANGE 50
 
 /**
@@ -13,9 +15,10 @@ extern "C" {
  */
 typedef struct {
     enum { HEADER_NONE=0, HEADER_FIELD, HEADER_VALUE } last_header_element;
-    char field[MAX_HEADERS][MAX_ELEMENT_SIZE];
-    char value[MAX_HEADERS][MAX_ELEMENT_SIZE];
-    int num_headers;
+    char **field;
+    char **value;
+    size_t num_headers;
+    size_t max_num_headers;
 } http_headers_t;
 
 /**
@@ -29,14 +32,27 @@ typedef struct {
 } range_t;
 
 /**
+ * Init http_headers_t.
+ * set maximum number of headers. If max_num_headers <= 0,
+ * DEFAULT_MAX_HEADERS (50) is applied.
+ */
+http_headers_t *init_http_headers(size_t max_num_headers);
+
+/**
+ * Free http_headers_t.
+ */
+void free_http_headers(http_headers_t *headers);
+
+/**
  * Set header
  * If header field is already set, it will replace with new value.
  *
  * @params headers Pointer to http_headers_t to be set.
  * @params field String to set field.
  * @params value String to set value associated with field.
+ * @return true if set_header is successful, otherwise false.
  */
-void set_header(http_headers_t *headers, char *field, char *value);
+bool set_header(http_headers_t *headers, const char *field, const char *value);
 
 /**
  * Find header value using search keyword (field).
@@ -45,7 +61,7 @@ void set_header(http_headers_t *headers, char *field, char *value);
  * @params search Field keyword.
  * @return If field keyword is found in headers, return the value or NULL otherwise.
  */
-char *find_header_value(http_headers_t *headers, char *search);
+char *find_header_value(http_headers_t *headers, const char *search);
 
 /**
  * Get range from "Range" field in header

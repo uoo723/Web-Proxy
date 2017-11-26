@@ -13,11 +13,21 @@ typedef struct {
     enum http_status status;
     unsigned short http_major;
     unsigned short http_minor;
-    http_headers_t headers;
+    http_headers_t *headers;
     int content_length;
     char *content;      // Required manually calling free after use if content_length is not 0
     bool on_message_completed;
 } http_response_t;
+
+/**
+ * Init http_response_t.
+ */
+http_response_t *init_http_response(size_t max_num_headers);
+
+/**
+ * Free http_response_t.
+ */
+void free_http_response(http_response_t *response);
 
 /* ********************** Callback for http_parser ********************* */
 int response_on_header_field_cb(http_parser *parser, const char *at, size_t len);
