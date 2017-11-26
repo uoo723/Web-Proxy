@@ -241,6 +241,61 @@ int response_on_message_complete_cb(http_parser *parser) {
     return 0;
 }
 
+bool make_response_string(http_response_t *response, char **dst, size_t *dst_size) {
+    http_headers_t *headers;
+    size_t buf_size;
+    char *buf;
+    int i;
+
+    headers = &response->headers;
+    buf_size = response->content_length + 2048;
+    *dst = NULL;
+    *dst_size = 0;
+    buf = malloc(buf_size);
+
+    if (!buf) {
+        return false;
+    }
+
+    memset(buf, 0, buf_size);
+
+    sprintf(buf, "HTTP/%d.%d %s\r\n", response->http_major,
+        response->http_minor, get_status_string(response->status));
+
+    for (i = 0; i < headers->num_headers; i++) {
+        if (strlen(buf) + 1 > buf_size) {
+            buf_size += 1024;
+            buf = realloc(buf, buf_size);
+            if (!buf) {
+                return false;
+            }
+        }
+
+        strcat(buf, headers->field[i]);
+        strcat(buf, ": ");
+        strcat(buf, headers->value[i]);
+        strcat(buf, "\r\n");
+    }
+    strcat(buf, "\r\n");
+
+    *dst_size = strlen(buf) + response->content_length;
+
+    *dst = malloc(*dst_size);
+    if (!(*dst)) {
+        free(buf);
+        *dst_size = 0;
+        return false;
+    }
+
+    memset(*dst, 0, *dst_size);
+    
+    memcpy(*dst, buf, strlen(buf));
+    memcpy(*dst + strlen(buf), response->content, response->content_length);
+
+    free(buf);
+    return true;
+}
+
 void print_http_response(http_response_t *response) {
     http_headers_t *headers = &response->headers;
     int i;

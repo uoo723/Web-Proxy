@@ -75,7 +75,9 @@ static bool get_addrinfo(const char *hostname, const char *port,
 // Called from thread. receive request from client.
 // The server side of proxy.
 // If cache is existed, hit is set to true. And cache is sent directly to client.
-static bool rcv_request(int sockfd, http_request_t *request, bool *hit) {
+// When client request connect method upgrade is set to true.
+static bool rcv_request(int sockfd, http_request_t *request, bool *upgrade,
+        bool *hit) {
     http_parser *parser;
     http_parser_settings settings;
     int nparsed, recved;
@@ -100,6 +102,7 @@ static bool rcv_request(int sockfd, http_request_t *request, bool *hit) {
 
     http_parser_init(parser, HTTP_REQUEST);
     parser->data = request;
+    *upgrade = false;
 
     while (!request->on_message_completed) {
         if ((recved = recv(sockfd, buf, BUFFER_SIZE, 0)) == -1) {
@@ -110,9 +113,10 @@ static bool rcv_request(int sockfd, http_request_t *request, bool *hit) {
 
         nparsed = http_parser_execute(parser, &settings, buf, recved);
         if (parser->upgrade) {
-            fprintf(stderr, "HTTP tunnel is not implemented\n");
+            // fprintf(stderr, "HTTP tunnel is not implemented\n");
             free(parser);
-            return false;
+            *upgrade = true;
+            return true;
         }
 
         if (nparsed != recved) {
@@ -367,13 +371,164 @@ static bool rcv_and_send_response(int server_sockfd, int client_sockfd,
     return true;
 }
 
+// This function is called for HTTPS connection.
+// The proxy sever just forward to client's tcp stream to origin server
+// and vice versa unless tcp connection is closed.
+static void http_tunnel(int client_sockfd, http_request_t *request) {
+    struct addrinfo *addrinfo, *rp;
+    http_response_t *response;
+    char *res_str;
+    char buf[BUFFER_SIZE] = {0};
+    size_t res_len, remaining, offset, bytes /* using at recv and send */;
+    int server_sockfd;
+
+    if (request->host == NULL || strcmp(request->host, "") == 0) {
+        fprintf(stderr, "hostname is not specified\n");
+        close(client_sockfd);
+        return;
+    }
+
+    if (!get_addrinfo(request->host, request->port, &addrinfo)) {
+        fprintf(stderr, "get_addrinfo() failed\n");
+        close(client_sockfd);
+        return;
+    }
+
+    for (rp = addrinfo; rp != NULL; rp = rp->ai_next) {
+        if ((server_sockfd = socket(rp->ai_family, rp->ai_socktype,
+            rp->ai_protocol)) == -1)
+            continue;
+
+        if (connect(server_sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
+            break;
+
+        close(server_sockfd);
+    }
+
+    if (rp == NULL) {
+        fprintf(stderr, "Could not connect\n");
+        close(client_sockfd);
+        return;
+    }
+
+    freeaddrinfo(addrinfo);
+
+    response = malloc(sizeof(http_response_t));
+    if (!response) {
+        perror("response cannot be initialized");
+        close(client_sockfd);
+        close(server_sockfd);
+        return;
+    }
+    memset(response, 0, sizeof(http_response_t));
+
+    response->http_major = request->http_major;
+    response->http_minor = request->http_minor;
+    response->status = HTTP_STATUS_OK;
+
+    if (!make_response_string(response, &res_str, &res_len)) {
+        fprintf(stderr, "make_response_string() failed\n");
+        free(response);
+        close(client_sockfd);
+        close(server_sockfd);
+        return;
+    }
+    free(response);
+
+    remaining = res_len;
+    offset = 0;
+
+    while (remaining != 0) {
+        size_t buf_size;
+
+        if (remaining <= BUFFER_SIZE) {
+            buf_size = remaining;
+        } else {
+            buf_size = BUFFER_SIZE;
+        }
+
+        memcpy(buf, res_str + offset, buf_size);
+        if ((bytes = send(client_sockfd, buf, buf_size, 0)) == -1) {
+            perror("send() failed");
+            free(res_str);
+            close(client_sockfd);
+            close(server_sockfd);
+            return;
+        }
+
+        remaining -= bytes;
+        offset += bytes;
+    }
+    free(res_str);
+
+    while (1) {
+        while (1) {
+            if ((bytes = recv(client_sockfd, buf, BUFFER_SIZE,
+                    MSG_DONTWAIT | MSG_NOSIGNAL)) == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                } else {
+                    if (errno == EPIPE) {
+                        close(server_sockfd);
+                    } else {
+                        perror("recv(client_sockfd) failed");
+                        close(server_sockfd);
+                        close(client_sockfd);
+                    }
+                    return;
+                }
+            }
+
+            if ((bytes = send(server_sockfd, buf, bytes, MSG_NOSIGNAL)) == -1) {
+                if (errno == EPIPE) {
+                    close(client_sockfd);
+                } else {
+                    perror("send(server_sockfd) failed");
+                    close(server_sockfd);
+                    close(client_sockfd);
+                }
+                return;
+            }
+        }
+
+        while (1) {
+            if ((bytes = recv(server_sockfd, buf, BUFFER_SIZE,
+                    MSG_DONTWAIT | MSG_NOSIGNAL)) == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                } else {
+                    if (errno == EPIPE) {
+                        close(client_sockfd);
+                    } else {
+                        perror("recv(server_sockfd) failed");
+                        close(server_sockfd);
+                        close(client_sockfd);
+                    }
+                    return;
+                }
+            }
+
+            if ((bytes = send(client_sockfd, buf, bytes, MSG_NOSIGNAL)) == -1) {
+                if (errno == EPIPE) {
+                    close(server_sockfd);
+                } else {
+                    perror("send(client_sockfd) failed");
+                    close(server_sockfd);
+                    close(client_sockfd);
+                }
+                return;
+            }
+        }
+    }
+}
+
 // thread entry point.
 static void thread_main(void *data) {
     args_t *args = (args_t *) data;
     http_request_t *request = malloc(sizeof(http_request_t));
     http_response_t *response = malloc(sizeof(http_response_t));
     int server_sockfd;
-    bool hit;
+    bool hit, upgrade;
 
     if (!request) {
         perror("request cannot be initialized");
@@ -391,8 +546,22 @@ static void thread_main(void *data) {
 
     strcpy(request->ip, args->ip);
 
-    if (!rcv_request(args->sockfd, request, &hit)) {
+    if (!rcv_request(args->sockfd, request, &upgrade, &hit)) {
         fprintf(stderr, "rcv_request() failed\n");
+    } else if (upgrade) {       // HTTP tunneling
+        // char str[128] = {0};
+        // strcpy(str, request->host);
+        // strcat(str, ":");
+        // strcat(str, request->port);
+        // printf("\nreceived HTTP tunnel (CONNECT Method) request from client\n");
+        // printf("Unable to cache\n");
+        // printf("request: %s\n", str);
+        // fflush(stdout);
+        http_tunnel(args->sockfd, request);
+        free(request);
+        free(response);
+        free(args);
+        return;
     } else if (hit) {
         printf("hit ");
         print_cache_status();
