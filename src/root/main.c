@@ -12,7 +12,7 @@
 #include <errno.h>
 #include <pthread.h>
 
-#include <thpool/thpool.h>
+// #include <thpool/thpool.h>
 #include <cache/lru.h>
 #include <http/http_common.h>
 #include <http/http_request.h>
@@ -20,7 +20,7 @@
 #include <http/http_log.h>
 
 #define BACKLOG 10
-#define THREAD_NUM 8
+// #define THREAD_NUM 8
 #define BUFFER_SIZE (80 * 1024)
 #define CACHE_SIZE (5 * 1024 * 1024)  // 5MB
 #define OBJECT_SIZE (512 * 1024)        // 512KB
