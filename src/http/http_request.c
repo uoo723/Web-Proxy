@@ -121,7 +121,7 @@ int request_on_message_complete_cb(http_parser *parser) {
 
     http_parser_url_init(&u);
 
-    char url[64] = {0};
+    char url[256] = {0};
 
     char *host = find_header_value(&request->headers, "Host");
 
