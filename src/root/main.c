@@ -76,8 +76,8 @@ static bool get_addrinfo(const char *hostname, const char *port,
 // The server side of proxy.
 // If cache is existed, hit is set to true. And cache is sent directly to client.
 // When client request connect method upgrade is set to true.
-static bool rcv_request(int sockfd, http_request_t *request, bool *upgrade,
-        bool *hit) {
+static bool rcv_request(int sockfd, http_request_t *request,
+        http_response_t *response, bool *upgrade, bool *hit) {
     http_parser *parser;
     http_parser_settings settings;
     int nparsed, recved;
@@ -148,7 +148,7 @@ static bool rcv_request(int sockfd, http_request_t *request, bool *upgrade,
         free(key);
         return false;
     }
-    free(parser);
+
     free(key);
 
     *hit = value ? true : false;
@@ -168,14 +168,26 @@ static bool rcv_request(int sockfd, http_request_t *request, bool *upgrade,
             memcpy(buf, value + offset, buf_size);
             if ((sent = send(sockfd, buf, buf_size, 0)) == -1) {
                 perror("send() failed");
+                free(parser);
                 return false;
             }
 
             remaining -= sent;
             offset += sent;
         }
+
+        http_parser_settings_init(&settings);
+        settings.on_header_field = response_on_header_field_cb;
+        settings.on_header_value = response_on_header_value_cb;
+        settings.on_body = response_on_body_cb;
+        settings.on_message_complete = response_on_message_complete_cb;
+
+        http_parser_init(parser, HTTP_RESPONSE);
+        parser->data = response;
+        http_parser_execute(parser, &settings, value, value_len);
     }
 
+    free(parser);
     return true;
 }
 
@@ -541,7 +553,7 @@ static void thread_main(void *data) {
 
     strcpy(request->ip, args->ip);
 
-    if (!rcv_request(args->sockfd, request, &upgrade, &hit)) {
+    if (!rcv_request(args->sockfd, request, response, &upgrade, &hit)) {
         fprintf(stderr, "rcv_request() failed\n");
     } else if (upgrade) {       // HTTP tunneling
         // char str[128] = {0};
