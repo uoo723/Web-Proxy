@@ -32,7 +32,8 @@ all: dir
 debug: all
 
 test:
-	@test/all_test.sh
+	@chmod -R 755 $(MAKE_DIR)/test/**/*.sh
+	@$(MAKE_DIR)/test/all_test.sh
 
 dir:
 	@mkdir -p $(LIB_DIR)
