@@ -13,6 +13,6 @@ $(OBJS): $(BUILD_DIR)/%.o: %.c %.h
 .PHONY: clean
 
 clean:
-	@$(RM) -f $(LIB) $(OBJS)
+	@$(RM) $(LIB) $(OBJS)
 	@echo "Remove Objects: $(notdir $(OBJS))"
 	@echo "Remove Libraries: $(notdir $(LIB))"

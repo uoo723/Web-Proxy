@@ -2,6 +2,7 @@ MAKE_DIR = $(PWD)
 SRC_DIR = $(MAKE_DIR)/src
 LIB_DIR = $(MAKE_DIR)/libs
 BUILD_DIR = $(MAKE_DIR)/build
+TARGET_DIR = $(MAKE_DIR)/bin
 
 INC_SRCH_PATH = -I$(SRC_DIR)
 
@@ -20,7 +21,7 @@ CFLAGS += -Wall
 
 debug: CFLAGS += -g
 
-export MAKE_DIR SRC_DIR LIB_DIR BUILD_DIR CC CFLAGS LIBS INC_SRCH_PATH
+export MAKE_DIR SRC_DIR LIB_DIR BUILD_DIR TARGET_DIR CC CFLAGS LIBS INC_SRCH_PATH
 
 all: dir
 	@$(MAKE) -C src/http -f http.mk

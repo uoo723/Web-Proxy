@@ -1,4 +1,3 @@
-TARGET_DIR = $(MAKE_DIR)/target
 TARGET = $(TARGET_DIR)/server
 
 SRCS = $(wildcard *.c)
@@ -15,6 +14,6 @@ $(OBJS): $(SRCS)
 .PHONY: clean
 
 clean:
-	@$(RM) -f $(OBJS) $(TARGET)
+	@$(RM) $(OBJS) $(TARGET)
 	@echo "Remove Objects: $(notdir $(OBJS))"
 	@echo "Remove Target: $(notdir $(TARGET))"
